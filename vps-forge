@@ -273,8 +273,7 @@ vf_main() {
 			# shellcheck disable=SC2034
 			VF_CLEAN_YES=1
 			;; # read by modules/90-self-clean.sh
-		--)
-			;;
+		--) ;;
 		-*)
 			if [ -z "$cmd" ]; then
 				vf_usage
