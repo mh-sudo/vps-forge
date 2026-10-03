@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+# vps-forge — interactive TUI that provisions a fresh Ubuntu 22.04/24.04 VPS.
+# Entry point: argument parsing, UI bootstrap, run orchestration, CLI subcommands.
+set -Eeuo pipefail
+
+VF_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VF_LIB_DIR="$VF_SELF/lib"
+# shellcheck source=lib/common.sh
+source "$VF_LIB_DIR/common.sh"
+# shellcheck source=lib/ui.sh
+source "$VF_LIB_DIR/ui.sh"
+# shellcheck source=lib/safety.sh
+source "$VF_LIB_DIR/safety.sh"
+# shellcheck source=lib/preflight.sh
+source "$VF_LIB_DIR/preflight.sh"
+# shellcheck source=lib/runner.sh
+source "$VF_LIB_DIR/runner.sh"
+
+# pinned, checksum-verified gum release
+VF_GUM_VERSION="2.0.2"
+declare -A VF_GUM_SHA=(
+	[amd64]="9aad8600d9d280d91544439f35db4c9583cc0201bb718ac6afcc0f4989ea945b"
+	[arm64]="1e15dd7f82ee175cdd850c674f8c7025c16b263ffc13a3fb5142518e0445dfb7"
+)
+
+vf_on_error() {
+	local rc=$? line=${1:-?}
+	# FUNCNAME[1] = the function the ERR fired in (index 0 is this handler)
+	vf_log_error "unexpected error in '${FUNCNAME[1]:-?}' near line $line (exit $rc) — stack: ${FUNCNAME[*]:1:5}"
+	printf 'vps-forge: unexpected error in %s (exit %s, line %s). See %s\n' "${FUNCNAME[1]:-?}" "$rc" "$line" "$VF_LOG_FILE" >&2
+	exit "$rc"
+}
+trap 'vf_on_error $LINENO' ERR
+
+vf_on_interrupt() {
+	printf '\nvps-forge: interrupted — no half-applied module will continue.\n' >&2
+	printf 'If a safety guard was armed it will AUTO-REVERT (see: vps-forge status).\n' >&2
+	vf_log_warn "interrupted by user"
+	stty sane 2>/dev/null || true
+	exit 130
+}
+trap vf_on_interrupt INT TERM
+
+vf_usage() {
+	cat <<'USAGE'
+vps-forge — provision a fresh Ubuntu 22.04/24.04 VPS to production-ready state
+
+USAGE:
+  sudo ./vps-forge [FLAGS]              interactive run (TUI)
+  sudo ./vps-forge rollback [snapshot]  restore files/packages from a snapshot
+  sudo ./vps-forge verify-firewall      prove Docker published ports are blocked by default
+  sudo ./vps-forge docker-allow PORT/PROTO [comment]
+                                        expose a Docker-published port through DOCKER-USER
+  sudo ./vps-forge docker-deny PORT/PROTO
+  sudo ./vps-forge docker-fw-status     show DOCKER-USER rules
+  sudo ./vps-forge backup-test          snapshot + restore test of the backup config
+  sudo ./vps-forge panel-remove NAME    uninstall a panel (coolify|cloudpanel|cyberpanel)
+  sudo ./vps-forge self-clean [--scope=all|panels|docker|hardening] [--yes]
+                                        remove everything vps-forge applied (DANGEROUS)
+  vps-forge status                      run state, snapshots, armed guards
+  vps-forge guard-cancel NAME           cancel an armed auto-revert guard (sshd|ufw|...)
+
+FLAGS:
+  --profile=NAME        minimal | recommended | docker-host | custom (default: pick in TUI)
+  --module=a,b,c        explicit module ids (overrides profile)
+  --yes                 non-interactive: use defaults/config file
+  --config=FILE         flat "key: value" answers file
+  --dry-run             show the plan and exit (changes nothing)
+  --verbose             stream module command output
+  --keep-going          (non-interactive) continue after module failures
+  --no-lynis            skip the Lynis before/after audit
+  --no-color
+  --help | --version
+USAGE
+}
+
+# ---------- gum bootstrap ----------
+
+vf_ensure_gum() {
+	if command -v gum >/dev/null 2>&1; then return 0; fi
+	local url sha dest arch
+	arch="$(vf_arch)"
+	[ -n "${VF_GUM_SHA[$arch]:-}" ] || {
+		VF_UI=whiptail
+		return 0
+	}
+	url="https://github.com/charmbracelet/gum/releases/download/v${VF_GUM_VERSION}/gum_${VF_GUM_VERSION}_${arch}.deb"
+	sha="${VF_GUM_SHA[$arch]}"
+	dest="$VF_TMP_DIR/gum.deb"
+	if ! vf_curl -o "$dest" "$url"; then
+		vf_log_warn "gum download failed — falling back to whiptail/plain UI"
+		return 0
+	fi
+	local got
+	got="$(vf_sha256 "$dest")"
+	if [ "$got" != "$sha" ]; then
+		vf_log_warn "gum checksum mismatch (got $got) — falling back to whiptail/plain UI"
+		return 0
+	fi
+	if apt-get install -y -qq "$dest" >>"$VF_TMP_DIR/apt.log" 2>&1; then
+		command -v gum >/dev/null 2>&1 && vf_log_info "gum $VF_GUM_VERSION installed (checksum verified)"
+	else
+		dpkg -i "$dest" >>"$VF_TMP_DIR/apt.log" 2>&1 || vf_log_warn "gum install failed — using fallback UI"
+	fi
+}
+
+# ---------- run orchestration ----------
+
+vf_main_run() {
+	vf_need_root
+	# our PAM hardening sets UMASK 027 for login shells — that leaks into
+	# third-party installers we spawn (their GPG keyrings become unreadable by
+	# apt's _apt user). vps-forge sets explicit modes on everything it writes,
+	# so 022 here is safe and prevents that class of breakage.
+	umask 022
+	ui_init
+	if [ "$VF_UI" != "gum" ]; then
+		vf_ensure_gum
+		ui_init
+	fi
+	vf_ensure_dir "$VF_STATE_DIR" "$VF_CREDS_DIR" "$VF_STATE_DIR/applied"
+	touch "$VF_LOG_FILE"
+	chmod 640 "$VF_LOG_FILE"
+
+	cfg_load_defaults
+	cfg_load_state                                                  # remembered answers (weakest)
+	[ -n "${VF_CONFIG_FILE:-}" ] && cfg_load_file "$VF_CONFIG_FILE" # explicit file wins
+
+	ui_header "vps-forge $VF_VERSION — Ubuntu VPS provisioning"
+
+	# preflight BEFORE anything
+	vf_preflight_collect || true
+	if [ "$VF_NONINTERACTIVE" != "1" ]; then
+		vf_preflight_render || {
+			ui_para "Cancelled at preflight."
+			exit 0
+		}
+	else
+		vf_preflight_render || true
+	fi
+
+	manifest_load
+
+	# choose profile
+	local profile="${VF_PROFILE:-}"
+	if [ -z "$profile" ] && [ -n "${VF_MODULES:-}" ]; then profile=explicit; fi
+	if [ "$profile" = "explicit" ]; then
+		local m
+		IFS=',' read -ra m <<<"$VF_MODULES"
+		# shellcheck disable=SC2034  # array declared in lib/runner.sh
+		RUN_ORDER=("${m[@]}")
+	elif [ -z "$profile" ]; then
+		if [ "$VF_NONINTERACTIVE" = "1" ]; then
+			vf_die "--yes requires --profile=minimal|recommended|docker-host|custom (or --module=...)"
+		fi
+		profile="$(ui_choose "Choose a profile" \
+			"recommended - balanced hardening + optimization" \
+			"minimal - bare essentials only" \
+			"docker-host - recommended + hardened Docker" \
+			"custom - pick modules yourself")"
+		profile="${profile%% -*}"
+		profile="$(printf '%s' "$profile" | tr -d ' ')"
+	fi
+	cfg_set profile "$profile"
+	if [ "$profile" != "explicit" ]; then selection_pick "$profile"; fi
+
+	module_source_all
+
+	# interactive answers
+	if [ "$VF_NONINTERACTIVE" != "1" ]; then
+		module_ask_all
+	fi
+
+	# plan + review
+	module_plan_all
+	ui_header "Review — what will change"
+	ui_pager "$VF_PLAN_FILE"
+	if ui_confirm "Proceed with these changes?" y; then
+		:
+	else
+		ui_para "Cancelled — nothing was changed."
+		exit 0
+	fi
+
+	if [ "$VF_DRY_RUN" = "1" ]; then
+		ui_para "Dry run complete — no changes were made."
+		exit 0
+	fi
+
+	# safety on: snapshot + lynis pre
+	vf_snapshot_create run
+	if [ "${VF_NO_LYNIS:-0}" != "1" ]; then
+		if lynis_ensure; then lynis_run pre; else ui_warn "Lynis unavailable — skipping audit"; fi
+	fi
+
+	module_run_all
+	cfg_save
+
+	# lynis post + report
+	if [ "${VF_NO_LYNIS:-0}" != "1" ] && lynis_available; then
+		lynis_run post
+	fi
+	report_write
+	summary_render || true
+	ui_para "Log: $VF_LOG_FILE   Report: $VF_REPORT_FILE"
+}
+
+# ---------- subcommand dispatch ----------
+
+vf_sub_status() {
+	echo "vps-forge $VF_VERSION — status"
+	echo "state dir: $VF_STATE_DIR"
+	echo "snapshots:"
+	{ ls -1dt "$VF_BACKUP_ROOT"/*/ 2>/dev/null || true; } | head -10 | sed 's/^/  /'
+	echo "armed guards (auto-revert timers):"
+	vf_guard_list | sed 's/^/  /' || true
+	echo "applied modules:"
+	{ ls -1 "$VF_STATE_DIR/applied/" 2>/dev/null || true; } | sed 's/^/  /'
+	echo "credentials dir: $VF_CREDS_DIR"
+}
+
+vf_source_module() { # vf_source_module <file>
+	local f="$VF_MODULE_DIR/$1"
+	[ -r "$f" ] || vf_die "module file missing: $f"
+	# shellcheck source=/dev/null
+	source "$f"
+}
+
+vf_main() {
+	local cmd="" sub_args=()
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--help | -h)
+			vf_usage
+			exit 0
+			;;
+		--version)
+			echo "vps-forge $VF_VERSION"
+			exit 0
+			;;
+		--yes) VF_NONINTERACTIVE=1 ;;
+		--dry-run) VF_DRY_RUN=1 ;;
+		--verbose)
+			# shellcheck disable=SC2034
+			VF_VERBOSE=1 # read by lib/runner.sh
+			;;
+		--keep-going)
+			# shellcheck disable=SC2034
+			VF_KEEP_GOING=1 # read by lib/runner.sh
+			;;
+		--no-lynis) VF_NO_LYNIS=1 ;;
+		--no-color) export NO_COLOR=1 ;;
+		--profile=*) VF_PROFILE="${1#*=}" ;;
+		--profile)
+			shift
+			[ $# -gt 0 ] || vf_die "--profile needs a value"
+			VF_PROFILE="$1"
+			;;
+		--config=*) VF_CONFIG_FILE="${1#*=}" ;;
+		--config)
+			shift
+			[ $# -gt 0 ] || vf_die "--config needs a value"
+			VF_CONFIG_FILE="$1"
+			;;
+		--module=*) VF_MODULES="${1#*=}" ;;
+		--module)
+			shift
+			[ $# -gt 0 ] || vf_die "--module needs a value"
+			VF_MODULES="$1"
+			;;
+		--scope=*) VF_CLEAN_SCOPE="${1#*=}" ;;
+		--yes-clean)
+			# shellcheck disable=SC2034
+			VF_CLEAN_YES=1
+			;; # read by modules/90-self-clean.sh
+		--)
+			;;
+		-*)
+			if [ -z "$cmd" ]; then
+				vf_usage
+				vf_die "unknown flag: $1"
+			fi
+			# after a subcommand, flags belong to it (e.g. rollback --force)
+			sub_args+=("$1")
+			;;
+		*) if [ -z "$cmd" ]; then cmd="$1"; else sub_args+=("$1"); fi ;;
+		esac
+		shift || break
+	done
+
+	case "$cmd" in
+	"") vf_main_run ;;
+	rollback)
+		vf_need_root
+		ui_init
+		local rb_snap="" rb_arg
+		for rb_arg in "${sub_args[@]:-}"; do
+			case "$rb_arg" in
+			--force) VF_ROLLBACK_FORCE=1 ;;
+			[a-zA-Z0-9]*) rb_snap="$rb_arg" ;;
+			esac
+		done
+		vf_do_rollback "$rb_snap"
+		;;
+	status) vf_sub_status ;;
+	guard-cancel)
+		vf_need_root
+		vf_guard_cancel "${sub_args[0]:?guard name required}"
+		;;
+	verify-firewall)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		vf_source_module "41-docker-fw.sh"
+		docker_fw_verify
+		;;
+	docker-allow)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		vf_source_module "41-docker-fw.sh"
+		docker_fw_allow "${sub_args[0]:?port/proto required}" "${sub_args[1]:-manual-allow}"
+		;;
+	docker-deny)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		vf_source_module "41-docker-fw.sh"
+		docker_fw_deny "${sub_args[0]:?port/proto required}"
+		;;
+	docker-fw-status)
+		vf_need_root
+		vf_source_module "41-docker-fw.sh"
+		docker_fw_status
+		;;
+	backup-test)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		cfg_load_state
+		vf_source_module "55-restic.sh"
+		restic_selftest
+		;;
+	panel-remove)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		vf_source_module "70-panel-coolify.sh"
+		vf_source_module "71-panel-cloudpanel.sh"
+		vf_source_module "72-panel-cyberpanel.sh"
+		panel_remove "${sub_args[0]:?panel name required}"
+		;;
+	self-clean)
+		vf_need_root
+		ui_init
+		cfg_load_defaults
+		vf_source_module "90-self-clean.sh"
+		self_clean "${VF_CLEAN_SCOPE:-all}"
+		;;
+	*)
+		vf_usage
+		vf_die "unknown command: $cmd"
+		;;
+	esac
+}
+
+vf_main "$@"

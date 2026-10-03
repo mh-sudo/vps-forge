@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mh-sudo/vps-forge/security/advisories/new
+    about: Please report security issues privately — do not open a public issue.
+  - name: Question or usage help
+    url: https://github.com/mh-sudo/vps-forge/discussions
+    about: Ask anything about running vps-forge on your server.

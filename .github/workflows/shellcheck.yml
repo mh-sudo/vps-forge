@@ -1,0 +1,41 @@
+name: ShellCheck + shfmt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck and shfmt
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          curl -fsSL -o /usr/local/bin/shfmt \
+            https://github.com/mvdan/sh/releases/download/v3.11.0/shfmt_v3.11.0_linux_amd64
+          chmod +x /usr/local/bin/shfmt
+          echo "shfmt $(shfmt --version)"
+
+      - name: ShellCheck (warnings are failures)
+        run: shellcheck -S warning vps-forge install.sh lib/*.sh modules/*.sh
+
+      - name: shfmt (no diff allowed)
+        run: |
+          shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh
+
+      - name: Manifest <-> module cross-checks
+        run: |
+          bash -n vps-forge install.sh lib/*.sh modules/*.sh
+          while IFS='|' read -r id file title profiles risk desc; do
+            case "$id" in ''|\#*) continue ;; esac
+            test -r "modules/$file" || { echo "MISSING FILE: modules/$file"; exit 1; }
+            for fn in plan check run; do
+              grep -q "^mod_${id}_${fn}()" "modules/$file" || {
+                echo "MISSING mod_${id}_${fn} in $file"; exit 1; }
+            done
+          done < modules/manifest.conf
+          echo "cross-checks OK"

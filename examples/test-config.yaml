@@ -1,0 +1,19 @@
+# vps-forge example non-interactive config (flat "key: value" subset of YAML).
+# usage: sudo ./vps-forge --yes --profile=recommended --config=examples/test-config.yaml
+sys.timezone: UTC
+sys.locale: en_US.UTF-8
+sys.hostname: keep
+admin.username: forge
+admin.pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPJ2ESNbVBI6b6sAkEWlxjEIFN/R0EGi+YXgaNA/fmze vf-test-admin@zcode
+admin.disable_root_login: false
+ssh.port: keep
+ssh.allow_tcp_forwarding: false
+fw.open_ports:
+f2b.backend: systemd
+ua.auto_reboot: false
+docker.bind_ip: 127.0.0.1
+docker.ipv6: false
+proxy.engine: none
+backup.target: none
+panel: none
+totp.enabled: false
