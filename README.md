@@ -15,10 +15,8 @@ An interactive terminal installer for people who don't want to learn 40 hardenin
 curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
 ```
 
-<!-- Demo GIF: record with VHS (https://github.com/charmbracelet/vhs) using the
-     committed tape file, then uncomment:
-<img src="docs/assets/demo.gif" alt="vps-forge terminal UI walking through preflight, profile selection, review and apply" width="720">
--->
+<img src="docs/assets/demo.gif" alt="vps-forge terminal UI walking through preflight, review and apply on a fresh Ubuntu VM" width="720">
+<!-- Re-record with: vhs docs/assets/demo.tape  (see the tape header for setup) -->
 
 </div>
 

@@ -1,45 +1,72 @@
 # vps-forge demo tape — render with: vhs docs/assets/demo.tape
-# Output: docs/assets/demo.gif (referenced by the README once uncommented)
-# Keep under 30 seconds: preflight, pick profile, review, apply, report.
+# Output: docs/assets/demo.gif (referenced by README.md)
 #
-# NOTE: run against a THROWAWAY VM. The Type lines below simulate the keys you
-# would press; adjust timings to taste before recording.
+# Records a REAL run of vps-forge (single harmless module: journald caps) on a
+# disposable test VM over SSH. The VM is reached through an ssh config alias
+# ("vpsforge-demo") so no address ever appears on screen. Reset the VM after
+# re-recording (see TESTING.md) and remove the alias from ~/.ssh/config.
+#
+# Before recording:
+#   1. point ~/.ssh/config at your VM:
+#        Host vpsforge-demo
+#            HostName <ip>
+#            User root
+#            IdentityFile ~/.ssh/<key>
+#   2. have /root/vps-forge deployed on it
 
 Output docs/assets/demo.gif
-Set FontSize 20
-Set Width 1200
-Set Height 700
-Set Theme { "name": "vps-forge", "background": "#0d1117", "foreground": "#c9d1d9", "accent": "#23d3d3" }
+Set FontSize 18
+Set Width 1150
+Set Height 680
+Set Shell bash
+Set Theme {
+	"name": "vps-forge",
+	"background": "#0d1117",
+	"foreground": "#c9d1d9",
+	"accent": "#22d3ee"
+}
+Set Padding 32
 
-Type "ssh root@your-fresh-vps"
+# neutral local prompt (no personal info in the GIF)
+Type "export PS1='demo@laptop:~$ '"
 Enter
-Sleep 800ms
-Type "./vps-forge"
+Ctrl+L
+Sleep 600ms
+
+# ssh to the disposable VM via alias (no address on screen)
+Type "ssh vpsforge-demo"
 Enter
-Sleep 2s
+Sleep 3000ms
 
-# preflight screen
-Sleep 3s
+# launch vps-forge: one small module, lynis skipped to keep the demo short
+Type "cd /root/vps-forge && DEBIAN_FRONTEND=noninteractive ./vps-forge --module=journald --no-lynis"
 Enter
+Sleep 14000ms
 
-# profile selection
-Sleep 1s
+# preflight screen -> press Enter to continue
+Sleep 1500ms
 Enter
+Sleep 2500ms
 
-# custom checklist (skip — accept recommended defaults)
-Sleep 1s
-Enter
+# review screen (gum pager) -> read, then quit with q
+Sleep 2500ms
+Type "q"
+Sleep 1500ms
 
-# review screen
-Sleep 4s
-
-# confirm
+# confirm -> yes
 Type "y"
 Enter
-Sleep 8s
+Sleep 8000ms
 
-# final summary + report path
-Sleep 2s
+# summary shown; show the saved report
+Sleep 1500ms
+Type "clear"
+Enter
+Sleep 400ms
+Type "cat /root/vps-forge-report.txt"
+Enter
+Sleep 3500ms
 
-Ctrl+C
-Sleep 500ms
+Type "exit"
+Enter
+Sleep 800ms

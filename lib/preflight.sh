@@ -28,21 +28,21 @@ vf_preflight_collect() {
 }
 
 vf_preflight_render() { # -> exit 0 = sane to continue, 1 = blocked
-	local rows="" problems=""
-	rows+="Operating system|${PF[os]}"
-	rows+="|Virtualization|${PF[virt]} on ${PF[provider_dmi]}"
-	rows+="|CPU / RAM|${PF[cpu]} vCPU / ${PF[ram_mb]} MB"
-	rows+="|Disk free|${PF[disk_free_gb]} GB"
-	rows+="|Architecture|${PF[arch]}"
-	rows+="|SSH session|user '${PF[ssh_user]}', sshd listening on port(s): ${PF[ssh_ports]}"
-	rows+="|Firewall|UFW: ${PF[ufw]} (iptables backend: ${PF[iptables_backend]})"
-	rows+="|Docker|${PF[docker]}"
-	rows+="|Swap|${PF[swap]:-none}"
-	rows+="|Timezone / hostname|${PF[timezone]} / ${PF[hostname]}"
-	rows+="|Reboot pending|${PF[reboot_required]}"
+	local rows=() problems=""
+	rows+=("Operating system|${PF[os]}")
+	rows+=("Virtualization|${PF[virt]} on ${PF[provider_dmi]}")
+	rows+=("CPU / RAM|${PF[cpu]} vCPU / ${PF[ram_mb]} MB")
+	rows+=("Disk free|${PF[disk_free_gb]} GB")
+	rows+=("Architecture|${PF[arch]}")
+	rows+=("SSH session|user '${PF[ssh_user]}', sshd listening on port(s): ${PF[ssh_ports]}")
+	rows+=("Firewall|UFW: ${PF[ufw]} (iptables backend: ${PF[iptables_backend]})")
+	rows+=("Docker|${PF[docker]}")
+	rows+=("Swap|${PF[swap]:-none}")
+	rows+=("Timezone / hostname|${PF[timezone]} / ${PF[hostname]}")
+	rows+=("Reboot pending|${PF[reboot_required]}")
 
 	ui_header "Preflight"
-	printf '%s\n' "$rows" | awk -F'|' -v w="$VF_UI_WIDTH" '
+	printf '%s\n' "${rows[@]}" | awk -F'|' -v w="$VF_UI_WIDTH" '
 		{ printf "  \033[36m%-18s\033[0m %s\n", $1, $2 }' >&2
 
 	if ! vf_os_supported; then
