@@ -84,7 +84,8 @@ ui_confirm() { # ui_confirm "question" [default:y|n] -> exit code 0=yes 1=no
 	fi
 	case "$VF_UI" in
 	gum)
-		if [ "$def" = "n" ]; then ui_gum confirm "$q" --default=false 2>/dev/null; else ui_gum confirm "$q" 2>/dev/null; fi
+		# stderr stays visible: gum renders its UI there under command substitution
+		ui_gum confirm "$q" --default="$([ "$def" = "n" ] && echo false || echo true)"
 		;;
 	whiptail)
 		local extra=()
@@ -113,7 +114,12 @@ ui_choose() { # ui_choose "prompt" opt1 opt2... -> stdout: chosen value
 		return
 	fi
 	case "$VF_UI" in
-	gum) ui_gum choose --height "${VF_GUM_CHOOSE_HEIGHT:-15}" "$q" "${opts[@]}" 2>/dev/null ;;
+	gum)
+		# choose takes options positionally — the question must go to --header,
+		# and stderr stays visible: gum renders its UI there when stdout is
+		# captured by a command substitution (suppressing it hides the whole UI)
+		ui_gum choose --header "$q" --height "${VF_GUM_CHOOSE_HEIGHT:-15}" "${opts[@]}"
+		;;
 	whiptail)
 		local menu=() idx=1
 		for i in "${opts[@]}"; do
@@ -145,7 +151,7 @@ ui_multi() { # ui_multi "prompt" "preselected,csv" opt1 opt2... -> stdout: csv o
 	case "$VF_UI" in
 	gum)
 		local out
-		out="$(ui_gum choose --no-limit --selected "$pre" --height "${VF_GUM_CHOOSE_HEIGHT:-15}" "$q" "${opts[@]}" 2>/dev/null)"
+		out="$(ui_gum choose --no-limit --header "$q" --selected "$pre" --height "${VF_GUM_CHOOSE_HEIGHT:-15}" "${opts[@]}")"
 		[ -n "$out" ] && printf '%s\n' "$out" | paste -sd, -
 		;;
 	whiptail)
@@ -189,7 +195,7 @@ ui_input() { # ui_input "prompt" [default] -> stdout: value
 		return
 	fi
 	case "$VF_UI" in
-	gum) v="$(ui_gum input --header "$q" --value "$d" 2>/dev/null)" && printf '%s\n' "$v" ;;
+	gum) v="$(ui_gum input --header "$q" --value "$d")" && printf '%s\n' "$v" ;;
 	whiptail) v="$(whiptail --inputbox "$q" 0 "$VF_UI_WIDTH" "$d" --stdout 2>/dev/null)" && printf '%s\n' "$v" ;;
 	*)
 		read -r -p "$q [$d]: " v </dev/tty >&2
@@ -205,7 +211,7 @@ ui_password() { # secret input -> stdout
 		return
 	fi
 	case "$VF_UI" in
-	gum) ui_gum input --password --header "$q" 2>/dev/null ;;
+	gum) ui_gum input --password --header "$q" ;;
 	whiptail) whiptail --passwordbox "$q" 0 "$VF_UI_WIDTH" --stdout 2>/dev/null ;;
 	*)
 		local v
@@ -232,21 +238,25 @@ ui_pager() { # ui_pager <file>
 	esac
 }
 
-ui_spin() { # ui_spin "title" -- cmd args... ; output captured to spin log; returns cmd status
+ui_spin() { # ui_spin "title" -- cmd args... ; output captured to a per-call log; returns cmd status
 	local title="$1"
 	shift
 	if [ "${1:-}" = "--" ]; then shift; fi
 	local cmd="$*"
+	# unique log per call — a shared spin.log gets polluted by later spins,
+	# destroying the failure evidence of earlier ones
+	local log
+	log="$(mktemp "$VF_TMP_DIR/spin.XXXXXX.log")"
 	vf_log_info "run: $cmd"
 	if [ "$VF_UI" = "gum" ] && [ "$VF_NONINTERACTIVE" != "1" ]; then
-		ui_gum spin --spinner line --title " $title" -- bash -c "$cmd >'$VF_TMP_DIR/spin.log' 2>&1"
+		ui_gum spin --spinner line --title " $title" -- bash -c "$cmd >'$log' 2>&1"
 	else
 		printf '  ... %s\n' "$title" >&2
-		bash -c "$cmd >'$VF_TMP_DIR/spin.log' 2>&1"
+		bash -c "$cmd >'$log' 2>&1"
 	fi
 	local rc=$?
-	[ $rc -ne 0 ] && { tail -15 "$VF_TMP_DIR/spin.log" >&2 || true; }
-	cp -f "$VF_TMP_DIR/spin.log" "$VF_TMP_DIR/spin.last.log" 2>/dev/null || true
+	[ $rc -ne 0 ] && { tail -15 "$log" >&2 || true; }
+	cp -f "$log" "$VF_TMP_DIR/spin.last.log" 2>/dev/null || true
 	return $rc
 }
 

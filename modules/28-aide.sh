@@ -19,10 +19,20 @@ mod_aide_run() {
 		return 0
 	fi
 	ui_para "Building AIDE baseline (this can take a few minutes)..."
-	if ! ui_spin "AIDE init — scanning filesystem" -- aideinit --yes -y -f; then
-		ui_warn "aideinit failed — AIDE left unconfigured; re-run this module"
-		return 1
-	fi
+	# aideinit occasionally fails right after install (package postinst races);
+	# retry once before giving up
+	local attempt
+	for attempt in 1 2; do
+		if ui_spin "AIDE init — scanning filesystem (attempt $attempt)" -- aideinit --yes -y -f; then
+			break
+		fi
+		[ "$attempt" = "2" ] && {
+			ui_warn "aideinit failed twice — AIDE left unconfigured; re-run this module"
+			return 1
+		}
+		ui_warn "aideinit failed — waiting 10s and retrying"
+		sleep 10
+	done
 	[ -e /var/lib/aide/aide.db ] || {
 		ui_warn "AIDE db not created"
 		return 1
