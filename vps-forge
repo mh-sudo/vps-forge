@@ -87,6 +87,16 @@ vf_ensure_gum() {
 	url="https://github.com/charmbracelet/gum/releases/download/v${VF_GUM_VERSION}/gum_${VF_GUM_VERSION}_${arch}.deb"
 	sha="${VF_GUM_SHA[$arch]}"
 	dest="$VF_TMP_DIR/gum.deb"
+	# minimal provider images can ship without curl — apt is the only guaranteed
+	# downloader; without this the run silently degrades to whiptail/plain UI
+	if ! command -v curl >/dev/null 2>&1; then
+		vf_apt_wait_quiet
+		if ! DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" install -y -qq curl ca-certificates >>"$VF_TMP_DIR/apt.log" 2>&1; then
+			DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" update -qq >>"$VF_TMP_DIR/apt.log" 2>&1 || true
+			DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" install -y -qq curl ca-certificates >>"$VF_TMP_DIR/apt.log" 2>&1 ||
+				vf_log_warn "cannot install curl — falling back to whiptail/plain UI"
+		fi
+	fi
 	if ! vf_curl -o "$dest" "$url"; then
 		vf_log_warn "gum download failed — falling back to whiptail/plain UI"
 		return 0

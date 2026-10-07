@@ -44,4 +44,17 @@ shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh >/dev/null || fail=
 echo "== bash -n =="
 for f in vps-forge install.sh lib/*.sh modules/*.sh; do bash -n "$f" || fail=1; done
 
+echo "== checksums.txt freshness =="
+# checksums.txt must match the shipped tree exactly (a content change without
+# regenerating it ships a verifier that fails server-side)
+find vps-forge install.sh lib modules -type f | LC_ALL=C sort | while read -r f; do
+	sha256sum "$f"
+done >"$DIR/.cksum.tmp"
+if ! diff -q "$DIR/.cksum.tmp" checksums.txt >/dev/null; then
+	echo "checksums.txt STALE — run scripts/make-checksums.sh"
+	diff "$DIR/.cksum.tmp" checksums.txt | head -6
+	fail=1
+fi
+rm -f "$DIR/.cksum.tmp"
+
 if [ "$fail" = "0" ]; then echo "ALL CONSISTENCY GATES PASS"; else echo "GATE FAILURES PRESENT"; exit 1; fi
