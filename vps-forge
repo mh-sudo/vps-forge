@@ -126,6 +126,7 @@ vf_main_run() {
 	ui_init
 	if [ "$VF_UI" != "gum" ]; then
 		vf_ensure_gum
+		VF_UI=auto # re-detect: ensure_gum may have just installed gum (ui_init only resolves "auto")
 		ui_init
 	fi
 	vf_ensure_dir "$VF_STATE_DIR" "$VF_CREDS_DIR" "$VF_STATE_DIR/applied"
