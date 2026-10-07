@@ -29,8 +29,8 @@ mod_sysbase_run() {
 	loc="$(cfg_get sys.locale en_US.UTF-8)"
 	hn="$(cfg_get sys.hostname keep)"
 
-	# timezone
-	if [ "$tz" != "auto" ] && [ "$tz" != "$(cat /etc/timezone 2>/dev/null)" ]; then
+	# timezone ("" and "auto" both mean: keep the current timezone)
+	if [ -n "$tz" ] && [ "$tz" != "auto" ] && [ "$tz" != "$(cat /etc/timezone 2>/dev/null)" ]; then
 		if timedatectl list-timezones 2>/dev/null | grep -qx "$tz"; then
 			timedatectl set-timezone "$tz" && vf_log_info "timezone set: $tz"
 		else

@@ -195,7 +195,13 @@ ui_input() { # ui_input "prompt" [default] -> stdout: value
 		return
 	fi
 	case "$VF_UI" in
-	gum) v="$(ui_gum input --header "$q" --value "$d")" && printf '%s\n' "$v" ;;
+	gum)
+		# placeholder, not --value: a prefilled value gets typed text APPENDED
+		# (e.g. "auto" + "Asia/Dhaka" -> "autoAsia/Dhaka"); a gray placeholder
+		# hint is replaced by typing, and empty input accepts the default
+		if ! v="$(ui_gum input --header "$q" --placeholder "$d")"; then return 1; fi
+		printf '%s\n' "${v:-$d}"
+		;;
 	whiptail) v="$(whiptail --inputbox "$q" 0 "$VF_UI_WIDTH" "$d" --stdout 2>/dev/null)" && printf '%s\n' "$v" ;;
 	*)
 		read -r -p "$q [$d]: " v </dev/tty >&2

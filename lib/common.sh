@@ -64,10 +64,11 @@ cfg_is_true() { case "$(cfg_get "$1" "false")" in 1 | true | True | TRUE | yes |
 
 cfg_load_defaults() {
 	# Default answers for every ask-able key (see README "Configuration keys").
+	# NOTE: never preload sentinel-valued keys (sys.timezone/sys.hostname): vf_ask
+	# prefills from the stored value, and sentinels like "auto"/"keep" then leak
+	# into the input; module-passed defaults cover the unset case.
 	local defaults=(
-		"sys.timezone=auto"
 		"sys.locale=en_US.UTF-8"
-		"sys.hostname=keep"
 		"swap.size=auto"
 		"perf.zram=false"
 		"perf.tmpfs_tmp=false"
