@@ -165,3 +165,40 @@ Ubuntu 24.04 (point release auto-upgraded to .5 by unattended-upgrades during te
 only sshd :22 listening; zero vps-forge packages/users/units/firewall/Docker data;
 operator access = root password (as configured by owner) + the zcode ed25519 key;
 project deployed at /root/vps-forge with checksums.txt verified server-side.
+
+## G. Interactive-path validation (2026-10-06/07) — after the owner's manual test failed
+
+Context: owner reinstalled the server (fresh 24.04, zcode key) and ran the TUI by
+hand; it failed with "all sorts of errors". The non-interactive suite never
+exercises the gum prompt path, so the whole class was invisible to it. Reproduced
+by driving the REAL interactive flow in a tmux session on the server
+(`tmux send-keys` + `capture-pane`, ANSI-stripped) — a driver that types into the
+same UI a human sees.
+
+| # | Test | Result |
+|---|------|--------|
+| G1 | Reproduce owner's failure in tmux driver | **REPRODUCED** — `error: unknown profile: Chooseaprofile` + prompts rendering invisibly (runs hung) |
+| G2 | Full Recommended profile, interactive, tmux-driven end to end | **PASS** — 17/18 ✓ (one transient aideinit failure: retried, then continue-prompt), summary + report written, Lynis 62 → 73 |
+| G3 | Custom profile checklist (ui_multi: risk tags + preselections) | PASS — rendered correctly, selection edited, clean abort path intact |
+| G4 | AIDE idempotency re-entry | PASS — "database already present — keeping existing baseline" |
+| G5 | Reset for owner re-test | PASS — self-clean + deep clean; only sshd :22 remains, key + password both work |
+
+### Bugs found & fixed during G (each re-tested)
+21. **question-as-option in `gum choose`** — options are positional; the question
+    text was passed as the FIRST option, so "Choose a profile" was selectable and
+    picking it crashed with `unknown profile: Chooseaprofile`. Fix: question goes
+    to `--header` (ui_choose + ui_multi).
+22. **stderr suppression hid the entire UI** — gum renders its interface to STDERR
+    when stdout is captured by command substitution; every prompt call had
+    `2>/dev/null`, so choose/multi/confirm/input/password were invisible and runs
+    hung. Fix: suppression removed on all gum prompt paths (kept for whiptail,
+    which uses --stdout correctly).
+23. **shared spin.log destroyed failure evidence + aideinit postinst race** — one
+    global spin log meant a later spin overwrote an earlier failure's output
+    (masked why aideinit died); aideinit also fails transiently right after
+    install. Fix: per-call `mktemp` spin logs; aideinit retries once after 10s.
+
+Fixed tree: shellcheck/shfmt/manifest gates pass, committed
+(`fix(tui): gum interactive prompts`), pushed, CI green; re-mirrored to
+/root/vps-forge and `sha256sum -c checksums.txt` verified server-side (an
+earlier partial sync had left 2 deployed files diverging from checksums).
