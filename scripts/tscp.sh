@@ -13,6 +13,8 @@ else
 	export SSHPASS="$VF_TEST_PASS"
 	RSH="sshpass -e $RSH"
 fi
-exec rsync -a --delete --stats -e "$RSH" \
+# --chown=0:0: rsync -a would carry the local (non-root) uid/gid onto the
+# server — the deployed tree must be root-owned
+exec rsync -a --delete --stats --chown=0:0 -e "$RSH" \
 	--exclude '.git' --exclude '.env.test' --exclude 'test-out' --exclude 'scripts/' --exclude '*.log' \
 	"$DIR/" "${VF_TEST_USER}@${VF_TEST_HOST}:$REMOTE_DIR/"
