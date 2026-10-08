@@ -15,8 +15,9 @@ An interactive terminal installer for people who don't want to learn 40 hardenin
 curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
 ```
 
-<img src="docs/assets/demo.gif" alt="vps-forge terminal UI walking through preflight, review and apply on a fresh Ubuntu VM" width="720">
-<!-- Re-record with: vhs docs/assets/demo.tape  (see the tape header for setup) -->
+<img src="docs/assets/demo.gif" alt="vps-forge in action: preflight on a fresh Ubuntu VM, picking modules from the risk-tagged checklist, reviewing every change, applying 11 modules with green checks, and a final summary with the Lynis hardening index rising 63 → 71" width="720">
+<!-- Re-record: see the header of docs/assets/demo-a.tape (3-take flow + render-demo.sh) -->
+<!-- (a real run on a disposable VM: 11 low-risk modules, honest Lynis numbers) -->
 
 </div>
 

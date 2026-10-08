@@ -202,3 +202,44 @@ Fixed tree: shellcheck/shfmt/manifest gates pass, committed
 (`fix(tui): gum interactive prompts`), pushed, CI green; re-mirrored to
 /root/vps-forge and `sha256sum -c checksums.txt` verified server-side (an
 earlier partial sync had left 2 deployed files diverging from checksums).
+
+## H. README marketing GIF (2026-10-07/08) — re-record + the bugs the retake flushed out
+
+Owner asked for a marketing-grade GIF of the workflow for the README hero
+(custom-checklist cut chosen, replacing the old single-module demo).
+
+| # | Test | Result |
+|---|------|--------|
+| H1 | Rehearse checklist key sequence in tmux driver | **PASS** — exact 11-module selection; pager + confirm verified |
+| H2 | Take 1: single VHS tape, whole flow | **FAIL** — recording went black ~454s in (ttyd/page died → ssh HUP → run killed at module 8/11); no server-side OOM/disconnect trace. Restructured: run the TUI in a server-side tmux session, record two SHORT takes (A: intro→confirm; B: attach→y→apply→summary) stitched at the identical confirm screen |
+| H3 | Take A + take B (tmux-attach architecture) | **PASS** — A parked at confirm; B: all 11 modules [ok], Lynis 63 → 71, summary HELD on screen (keep-alive wrapper — a bare `tmux new ./vps-forge` closes the pane, and the summary, the instant the run exits) |
+| H4 | render-demo.sh: segment trims/speeds + palette + gifsicle | PASS — 42s, 1.4 MB, 1150×680 |
+| H5 | Frame review (contact sheet + full-res) | PASS — story readable, risk tags + ✓s + delta legible at README width; NO IP/hostname-leak/password anywhere |
+
+### Bugs found & fixed during H (each re-tested or proven live in the retake)
+24. **minimal images ship without curl** — gum bootstrap failed → whole run
+    silently degraded to plain UI. Fix: vf_ensure_gum apt-installs curl first.
+25. **UI backend picked before the gum bootstrap** — ui_init only resolves
+    VF_UI="auto"; the post-bootstrap re-detect was a no-op, so the FIRST run on
+    a gum-less box stayed on whiptail/plain forever. Fix: reset to auto before
+    re-detect.
+26. **gum input prefill corrupts typed answers** — `--value` prefills and typed
+    text APPENDS; with cfg defaults preloading `sys.timezone=auto`, typing
+    "Asia/Dhaka" produced "autoAsia/Dhaka" (any user typing over a default hit
+    this). Fix: `--placeholder` + empty-accepts-default; sentinel keys no
+    longer preloaded; sysbase treats "" tz like auto.
+27. **check.sh didn't gate checksums.txt freshness** — the curl fix initially
+    shipped without regenerating it (caught server-side: 1 non-OK). Fix: gate
+    added (tree hash vs checksums.txt).
+28. **gum choose --no-limit toggle key is "x", not space** — space goes into
+    the type-to-filter buffer and toggles nothing (cost the first rehearsal).
+    Documented in the tape headers. (Upstream UX, not our bug.)
+29. **self-clean needs its snapshots** — running it after deleting
+    /var/backups/vps-forge silently degrades to pattern-only cleanup
+    ("no first snapshot found"). Operator error, documented here; the final
+    reset below was run WITH snapshots intact.
+
+Final server state after H: self-clean --scope=all (snapshots intact) + manual
+residue purge; only sshd :22 listening; /root/vps-forge re-synced + checksums
+verified; recording alias removed. GIF pipeline committed: demo-predrive.sh +
+demo-a.tape + demo-b.tape + render-demo.sh (masters gitignored).

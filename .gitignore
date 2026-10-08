@@ -1,3 +1,4 @@
 .env.test
 *.log
 test-out/
+docs/assets/*.mp4
