@@ -274,3 +274,32 @@ Note: raw.githubusercontent CDN edges lag on commit by minutes (the BD edge
 served the previous commit while my local edge had the new one) — verified
 the fix via the deployed copy, and the public raw URLs once the edge caught
 up (both confirmed VF_REEXEC-free).
+
+## J. Real 29-module custom run on the public quickstart (2026-10-08, owner's terminal)
+
+The owner ran the public `curl | bash` quickstart on the fresh box and drove a
+full Custom profile (29 modules incl. zram, tmpfs, TOTP, Docker, CyberPanel).
+Result: modules 1–8 ✓, then **21 consecutive ✗** — every one with
+`mod-X.log: No such file or directory`. The pipe install itself now worked
+(round I).
+
+| # | Test | Result |
+|---|------|--------|
+| J1 | Reproduce (single run: `--module=tmpfs,services` after unmounting /tmp) | **REPRODUCED** — rc=1, ENOENT cascade; even the shell's own `> /tmp/x.log` redirect was shadowed by the mid-run mount |
+| J2 | Same scenario with the fix (scratch dir in /run) | **PASS** — rc=0, tmpfs ✓, follow-module clean |
+| J3 | Reset after the broken half-run | PASS — self-clean + zram stop + /tmp unmount + swapfile removal + reboot; only sshd :22, /tmp on disk, checksums 0 non-OK |
+
+### Bugs found & fixed during J
+32. **tmpfs module shadowed the run's scratch dir** — `mktemp -d
+    /tmp/vps-forge.XXX` lives under the very mount the tmpfs module creates
+    mid-run; every later module's `2>> $VF_TMP_DIR/mod-X.log` redirection then
+    hits a missing path → exit-1 cascade. Isolation testing can't catch this
+    (each module = its own invocation = fresh scratch); only tmpfs + later
+    modules in ONE run triggers it. Fix: scratch dir in **/run** (tmpfs
+    anyway, never shadowed by our own modules) + runner self-heals the dir
+    before each module + the tmpfs module now warns that existing /tmp files
+    become hidden until reboot.
+
+Note: the module-failure continue-prompts DID render during the owner's run —
+gum widgets draw and erase in place, so they leave no trace in terminal
+scrollback (they look absent in pastes; the user answered them).
