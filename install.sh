@@ -6,13 +6,6 @@ set -euo pipefail
 BASE_URL="${VF_BASE_URL:-https://raw.githubusercontent.com/mh-sudo/vps-forge/main}"
 DEST="${VF_DEST:-/root/.vps-forge}"
 
-# When piped (curl | bash), re-exec ourselves with a real tty so prompts work.
-if [ ! -t 0 ] && [ -z "${VF_REEXEC:-}" ]; then
-	if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-		VF_REEXEC=1 exec bash "$0" "$@" </dev/tty
-	fi
-fi
-
 say() { printf '\033[36m==>\033[0m %s\n' "$*" >&2; }
 die() {
 	printf 'install.sh: error: %s\n' "$*" >&2
@@ -27,7 +20,8 @@ for arg in "$@"; do
 	--base-url=*) BASE_URL="${arg#*=}" ;;
 	--dest=*) DEST="${arg#*=}" ;;
 	--help | -h)
-		echo "usage: curl -fsSL <url>/install.sh | sudo bash -s -- [--base-url=URL] [--dest=DIR] [vps-forge flags]"
+		echo "usage: curl -fsSL <url>/install.sh | sudo bash [--base-url=URL] [--dest=DIR] [vps-forge flags]"
+		echo "   or: sudo bash -s -- [--base-url=URL] [--dest=DIR] [vps-forge flags]"
 		exit 0
 		;;
 	*) ;;
@@ -79,4 +73,12 @@ fi
 
 chmod +x vps-forge
 say "checksums OK — starting vps-forge in $DEST"
+
+# When piped (curl | bash) stdin is the exhausted pipe — hand the TUI the
+# real terminal instead, so its prompts work. (We must NOT re-exec ourselves:
+# in a pipe, $0 is the bash BINARY, and "exec bash $0" dies with
+# "cannot execute binary file". There are no prompts before this point.)
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+	exec bash "$DEST/vps-forge" "$@" </dev/tty
+fi
 exec bash "$DEST/vps-forge" "$@"

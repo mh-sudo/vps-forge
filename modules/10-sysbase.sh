@@ -6,12 +6,15 @@ mod_sysbase_plan() {
 Timezone: $(cfg_get sys.timezone auto)   Locale: $(cfg_get sys.locale en_US.UTF-8)
 Install and enable chrony (NTP); stop systemd-timesyncd
 Hostname: $(cfg_get sys.hostname keep)
+/etc/hosts: map the hostname to 127.0.1.1 if unresolvable (silences sudo
+"unable to resolve host" — common on provider images)
 PLAN
 }
 
 mod_sysbase_check() {
 	command -v chronyd >/dev/null 2>&1 && systemctl is-active --quiet chrony &&
-		{ [ "$(cfg_get sys.hostname keep)" = "keep" ] || [ "$(hostname)" = "$(cfg_get sys.hostname keep)" ]; }
+		{ [ "$(cfg_get sys.hostname keep)" = "keep" ] || [ "$(hostname)" = "$(cfg_get sys.hostname keep)" ]; } &&
+		getent hosts "$(hostname)" >/dev/null 2>&1
 	return $?
 }
 
@@ -64,6 +67,15 @@ mod_sysbase_run() {
 		hostnamectl set-hostname "$hn"
 		vf_backup_file /etc/hosts
 		sed -i "s/\b${old}\b/${hn}/g" /etc/hosts 2>/dev/null || true
+	fi
+
+	# /etc/hosts sanity: providers often set the hostname without an /etc/hosts
+	# entry — every sudo then prints "unable to resolve host". Map it to
+	# 127.0.1.1 (the Debian convention) only while it resolves to nothing.
+	if ! getent hosts "$(hostname)" >/dev/null 2>&1; then
+		vf_backup_file /etc/hosts
+		printf '127.0.1.1\t%s\n' "$(hostname)" >>/etc/hosts
+		vf_log_info "hostname '$(hostname)' was unresolvable — mapped to 127.0.1.1 in /etc/hosts"
 	fi
 	return 0
 }
