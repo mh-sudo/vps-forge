@@ -4,8 +4,8 @@
 #                         prompt (run ON the VM, from the repo root there)
 #   2. demo-a.tape        record the intro:  ssh -> tmux new -A -> preflight
 #                         -> custom checklist (toggles!) -> asks -> review
-#                         -> confirm bubble. STOPS before "y".
-#   3. demo-b.tape        record the apply:  tmux attach -> y -> snapshot +
+#                         -> review summary. STOPS at the "Ready?" chooser.
+#   3. demo-b.tape        record the apply:  tmux attach -> ENTER -> snapshot +
 #                         Lynis pre-audit -> 11 modules -> Lynis post-audit
 #                         -> summary (kept on screen by the predrive wrapper)
 #   4. render-demo.sh     stitch + pace + palette the two masters into demo.gif
@@ -131,12 +131,6 @@ Sleep 1500ms
 Enter
 Sleep 2000ms
 
-# review pager
-Sleep 4000ms
-PageDown
-Sleep 2500ms
-Type "q"
-Sleep 2000ms
-
-# confirm bubble — hold, do NOT proceed (take B continues from here)
-Sleep 5000ms
+# review: one-page color-coded summary + "Ready?" chooser — park here
+# (do NOT press Enter; take B continues from this exact screen)
+Sleep 8000ms

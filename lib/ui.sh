@@ -61,6 +61,16 @@ ui_fail() { printf '\033[31m✗\033[0m %s\n' "$*" >&2; }
 ui_skip() { printf '\033[33m•\033[0m %s (skipped)\n' "$*" >&2; }
 ui_info() { printf '  %s\n' "$*" >&2; }
 
+ui_risk_ansi() { # risk level -> ANSI color (low green, medium yellow, high red, critical magenta)
+	case "$1" in
+	low) printf 32 ;;
+	medium) printf 33 ;;
+	high) printf 31 ;;
+	critical) printf 35 ;;
+	*) printf 36 ;;
+	esac
+}
+
 ui_box() { # multi-line info box
 	local title="$1"
 	shift
@@ -254,11 +264,12 @@ ui_spin() { # ui_spin "title" -- cmd args... ; output captured to a per-call log
 	local log
 	log="$(mktemp "$VF_TMP_DIR/spin.XXXXXX.log")"
 	vf_log_info "run: $cmd"
+	# VF_IN_SPIN tells nested helpers (vf_pkg_install) not to spin again
 	if [ "$VF_UI" = "gum" ] && [ "$VF_NONINTERACTIVE" != "1" ]; then
-		ui_gum spin --spinner line --title " $title" -- bash -c "$cmd >'$log' 2>&1"
+		VF_IN_SPIN=1 ui_gum spin --spinner line --title " $title" -- bash -c "$cmd >'$log' 2>&1"
 	else
 		printf '  ... %s\n' "$title" >&2
-		bash -c "$cmd >'$log' 2>&1"
+		VF_IN_SPIN=1 bash -c "$cmd >'$log' 2>&1"
 	fi
 	local rc=$?
 	[ $rc -ne 0 ] && { tail -15 "$log" >&2 || true; }

@@ -97,7 +97,8 @@ vf_ensure_gum() {
 				vf_log_warn "cannot install curl — falling back to whiptail/plain UI"
 		fi
 	fi
-	if ! vf_curl -o "$dest" "$url"; then
+	if ! vf_boot_spin "downloading the interface toolkit (gum)" -- \
+		curl -fsSL --retry 3 --connect-timeout 15 -o "$dest" "$url"; then
 		vf_log_warn "gum download failed — falling back to whiptail/plain UI"
 		return 0
 	fi
@@ -107,7 +108,8 @@ vf_ensure_gum() {
 		vf_log_warn "gum checksum mismatch (got $got) — falling back to whiptail/plain UI"
 		return 0
 	fi
-	if apt-get install -y -qq "$dest" >>"$VF_TMP_DIR/apt.log" 2>&1; then
+	if vf_boot_spin "installing the interface (one-time, a few seconds)" -- \
+		apt-get install -y -qq "$dest"; then
 		command -v gum >/dev/null 2>&1 && vf_log_info "gum $VF_GUM_VERSION installed (checksum verified)"
 	else
 		dpkg -i "$dest" >>"$VF_TMP_DIR/apt.log" 2>&1 || vf_log_warn "gum install failed — using fallback UI"
@@ -182,21 +184,33 @@ vf_main_run() {
 		module_ask_all
 	fi
 
-	# plan + review
+	# plan + review: one-page color-coded summary (full list available on demand)
 	module_plan_all
-	ui_header "Review — what will change"
-	ui_pager "$VF_PLAN_FILE"
-	if ui_confirm "Proceed with these changes?" y; then
-		:
-	else
+	vf_review_summary
+	if [ "$VF_DRY_RUN" = "1" ]; then
+		ui_para "Dry run — no changes were made. Full plan: $VF_PLAN_FILE"
+		exit 0
+	fi
+	local action
+	action="$(ui_choose "Ready? ENTER applies the changes above" \
+		"Apply now  (ENTER)" \
+		"Read the full change list first" \
+		"Cancel — change nothing")" || true
+	case "$action" in
+	"Apply now"*) : ;;
+	"Read the full"*)
+		ui_header "Full plan — every change, command by command"
+		ui_pager "$VF_PLAN_FILE"
+		if ! ui_confirm "Proceed with these changes?" y; then
+			ui_para "Cancelled — nothing was changed."
+			exit 0
+		fi
+		;;
+	*)
 		ui_para "Cancelled — nothing was changed."
 		exit 0
-	fi
-
-	if [ "$VF_DRY_RUN" = "1" ]; then
-		ui_para "Dry run complete — no changes were made."
-		exit 0
-	fi
+		;;
+	esac
 
 	# safety on: snapshot + lynis pre
 	vf_snapshot_create run

@@ -258,12 +258,22 @@ vf_pkg_install() { # vf_pkg_install pkg... — recorded in snapshot for rollback
 	local pkgs=("$@") p
 	vf_apt_wait_quiet
 	vf_apt_update
+	local missing=()
 	for p in "${pkgs[@]}"; do
 		if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then
 			continue
 		fi
+		missing+=("$p")
 		vf_log_info "apt installing: $p"
 	done
+	# progress is shown by the per-module animator (vf_module_progress_start);
+	# a second spinner here would fight it for the same output line
+	[ "${#missing[@]}" -gt 0 ] || return 0
+	__vf_pkg_install_raw "${pkgs[@]}"
+}
+
+__vf_pkg_install_raw() {
+	local pkgs=("$@")
 	# install only the missing ones, but pass all (apt is idempotent; this keeps resolver happy)
 	if ! DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" \
 		install -y -qq "${pkgs[@]}" >>"$VF_TMP_DIR/apt.log" 2>&1; then
@@ -287,3 +297,22 @@ vf_pkg_purge() { # vf_pkg_purge pkg... (best-effort)
 vf_svc_enable() { systemctl enable --now "$@" >/dev/null 2>&1 || systemctl restart "$1" >/dev/null 2>&1 || true; }
 
 vf_curl() { curl -fsSL --retry 3 --connect-timeout 15 "$@"; }
+
+vf_boot_spin() { # vf_boot_spin "label" -- cmd... — pre-UI animated step (no gum yet)
+	local label="$1"
+	shift
+	[ "${1:-}" = "--" ] && shift
+	local log="$VF_TMP_DIR/boot-spin.log"
+	("$@" >"$log" 2>&1) &
+	local pid=$!
+	local frames=('|' / '-' '\') i=0
+	if [ -t 2 ]; then
+		while kill -0 "$pid" 2>/dev/null; do
+			printf '\r  \033[36m%s\033[0m %s  ' "${frames[$((i % 4))]}" "$label" >&2
+			i=$((i + 1))
+			sleep 0.2
+		done
+		printf '\r\033[2K' >&2
+	fi
+	wait "$pid"
+}

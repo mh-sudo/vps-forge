@@ -57,7 +57,7 @@ sleep 1
 tmux send-keys -t vpsforge PageDown
 sleep 1
 tmux send-keys -t vpsforge q
-waitfor "Proceed with these changes" 10 confirm || exit 1
+waitfor "ENTER applies the changes above" 10 confirm || exit 1
 cap positioned
 grep -a "selected modules" /var/log/vps-forge.log | tail -1
 echo POSITIONED_AT_CONFIRM

@@ -51,7 +51,7 @@ mod_docker_ask() {
 	if [ "$VF_NONINTERACTIVE" != "1" ]; then
 		local v
 		v="$(cfg_get docker.bind_ip 127.0.0.1)"
-		v="$(vf_ask docker.bind_ip "Default bind IP for published container ports (127.0.0.1 = NOT reachable externally unless you vps-forge docker-allow it; 0.0.0.0 = old Docker behaviour)" "$v" "127.0.0.1" "0.0.0.0")"
+		v="$(vf_ask docker.bind_ip "Docker published ports bind to (ENTER = 127.0.0.1, recommended)" "$v" "127.0.0.1" "0.0.0.0")"
 		cfg_set docker.bind_ip "$v"
 	fi
 }

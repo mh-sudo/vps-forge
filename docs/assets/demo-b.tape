@@ -32,8 +32,8 @@ Type "tmux attach -t vpsforge"
 Enter
 Sleep 5000ms
 
-# proceed: snapshot + lynis pre + 11 modules + lynis post + summary
-Type "y"
+# apply: ENTER picks "Apply now" in the Ready? chooser
+Enter
 Sleep 330000ms
 
 # summary — hold

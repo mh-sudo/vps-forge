@@ -41,31 +41,108 @@ profile_module_ids() { # -> space-separated ids for a profile name
 	printf '%s' "$out"
 }
 
+vf_entry_text() { # vf_entry_text title risk desc -> checklist line (comma-free, width-aware)
+	local t="$1" r="$2" d="$3"
+	t="${t//,/·}"
+	d="${d//,/·}"
+	d="${d^}"
+	local budget=$((VF_UI_WIDTH - ${#t} - ${#r} - 14))
+	[ "$budget" -gt 8 ] || budget=8
+	[ "${#d}" -gt "$budget" ] && d="${d:0:budget}"
+	while [ -n "$d" ] && [ "${d#"${d%?}"}" != " " ]; do d="${d%?}"; done
+	d="${d% }"
+	printf '%s [%s] — %s' "$t" "$r" "$d"
+}
+
+VF_PROGRESS_ANIM_PID=""
+vf_module_progress_start() { # animated "applying… Ns" line on stdout while a module runs
+	[ -t 1 ] || return 0
+	(
+		local frames=('|' / '-' '\\') i=0
+		while kill -0 "$PPID" 2>/dev/null && [ "$i" -lt 7200 ]; do
+			printf '\r  \033[36m%s\033[0m applying… %ds  ' "${frames[$((i % 4))]}" "$i"
+			i=$((i + 1))
+			sleep 1
+		done
+	) &
+	VF_PROGRESS_ANIM_PID=$!
+}
+vf_module_progress_stop() {
+	if [ -n "$VF_PROGRESS_ANIM_PID" ]; then
+		kill "$VF_PROGRESS_ANIM_PID" 2>/dev/null || true
+		wait "$VF_PROGRESS_ANIM_PID" 2>/dev/null || true
+		printf '\r\033[2K' >&1
+		VF_PROGRESS_ANIM_PID=""
+	fi
+}
+
+vf_review_summary() { # one-page color-coded summary of what will change
+	local total="${#RUN_ORDER[@]}" i idx risk
+	local n_low=0 n_med=0 n_high=0 n_crit=0
+	local -a cols=() tags=() titles=()
+	for i in "${RUN_ORDER[@]}"; do
+		idx="$(manifest_index_of "$i")"
+		risk="${M_RISK[$idx]}"
+		case "$risk" in
+		low) n_low=$((n_low + 1)) ;;
+		medium) n_med=$((n_med + 1)) ;;
+		high) n_high=$((n_high + 1)) ;;
+		critical) n_crit=$((n_crit + 1)) ;;
+		esac
+		titles+=("$(printf '%-30s' "$(printf '%s' "${M_TITLES[$idx]:0:30}")")")
+		tags+=("$risk")
+		cols+=("$(ui_risk_ansi "$risk")")
+	done
+	ui_header "Review — $total module(s) will be applied"
+	printf '  risk level: \033[32m%d low\033[0m · \033[33m%d medium\033[0m · \033[31m%d high\033[0m · \033[35m%d critical\033[0m\n' \
+		"$n_low" "$n_med" "$n_high" "$n_crit" >&2
+	for ((i = 0; i < total; i += 2)); do
+		if [ $((i + 1)) -lt "$total" ]; then
+			printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' \
+				"${titles[$i]}" "${cols[$i]}" "${tags[$i]}" \
+				"${titles[$((i + 1))]}" "${cols[$((i + 1))]}" "${tags[$((i + 1))]}" >&2
+		else
+			printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' "${titles[$i]}" "${cols[$i]}" "${tags[$i]}" >&2
+		fi
+	done
+	ui_info ""
+	ui_info "Timezone: $(cfg_get sys.timezone auto)    Hostname: $(cfg_get sys.hostname keep)    Panel: $(cfg_get panel none)"
+	ui_info "Admin user: $(cfg_get admin.username none)    SSH port: $(cfg_get ssh.port keep)    Docker bind: $(cfg_get docker.bind_ip n/a)"
+	ui_info "Safety: everything is backed up first — 'vps-forge rollback' undoes it."
+	ui_info "SSH/firewall changes auto-revert until you confirm from a NEW connection."
+}
+
 selection_pick() { # interactive/custom selection; sets RUN_ORDER from ids list or profile
-	local requested="$1" i idx id all=()
+	local requested="$1" i idx id
 	if [ "$requested" != "custom" ]; then
 		local sel
 		sel="$(profile_module_ids "$requested")"
 		[ -n "$sel" ] || vf_die "unknown profile: $requested (use minimal|recommended|dockerhost|custom)"
 		for id in $sel; do RUN_ORDER+=("$id"); done
 	else
+		# entries show title + risk + a short description (from the manifest);
+		# parse-back is by EXACT string match, so entries must be unique
+		local -a entry_strs=() entry_ids=()
 		for i in "${!M_IDS[@]}"; do
-			all+=("${M_IDS[$i]} [${M_RISK[$i]}]")
+			entry_strs+=("$(vf_entry_text "${M_TITLES[$i]}" "${M_RISK[$i]}" "${M_DESC[$i]}")")
+			entry_ids+=("${M_IDS[$i]}")
 		done
 		local def="" pre="" id2
 		def="$(profile_module_ids recommended)"
 		for id2 in $def; do
 			idx="$(manifest_index_of "$id2")"
-			pre+="${M_IDS[$idx]} [${M_RISK[$idx]}],"
+			pre+="${entry_strs[$idx]},"
 		done
 		pre="${pre%,}"
 		local chosen
-		chosen="$(ui_multi "Select modules (arrows/space, enter to confirm)" "$pre" "${all[@]}")" || vf_die "selection cancelled"
+		chosen="$(ui_multi "Select modules — move: ↑↓ · check/uncheck: x (or Tab) · all: ctrl+a · confirm: ENTER" "$pre" "${entry_strs[@]}")" || vf_die "selection cancelled"
 		local c
-		for c in $(printf '%s' "$chosen" | tr ',' ' '); do
-			id="${c%% \[*}"
-			RUN_ORDER+=("$id")
-		done
+		while IFS= read -r c; do
+			[ -n "$c" ] || continue
+			for i in "${!entry_strs[@]}"; do
+				[ "$c" = "${entry_strs[$i]}" ] && RUN_ORDER+=("${entry_ids[$i]}")
+			done
+		done < <(printf '%s' "$chosen" | tr ',' '\n')
 	fi
 	# panels are mutually exclusive
 	local panels=() r
@@ -175,7 +252,19 @@ module_run_all() {
 			continue
 		fi
 		vf_log_info "module $id: running"
+		# modules that ask questions mid-run must not have the progress line
+		# over them; everything else gets an animated "applying… Ns" so the
+		# user can see work happening (long apt/download steps)
+		local prompting=0
+		case "$id" in
+		admin_user | sshd | ufw | totp | msmtp | docker | panel_cyberpanel) prompting=1 ;;
+		esac
+		if [ "$prompting" = "1" ] && [ "$VF_NONINTERACTIVE" != "1" ]; then
+			ui_info "(this step may ask you to confirm — watch for a question)"
+		fi
+		[ "$prompting" = "0" ] && vf_module_progress_start
 		if "mod_${id}_run" 2>>"$VF_TMP_DIR/mod-$id.log"; then
+			vf_module_progress_stop
 			ui_ok "${M_TITLES[$idx]}"
 			RUN_STATUS[$((n - 1))]="ok"
 			printf '%s\n' "$(date -u +%FT%TZ)" >"$VF_STATE_DIR/applied/$id.done" 2>/dev/null || {
@@ -184,6 +273,7 @@ module_run_all() {
 			}
 		else
 			rc=$?
+			vf_module_progress_stop
 			ui_fail "${M_TITLES[$idx]} (exit $rc) — see $(basename "$VF_LOG_FILE")"
 			tail -5 "$VF_TMP_DIR/mod-$id.log" >&2 || true
 			RUN_STATUS[$((n - 1))]="failed"

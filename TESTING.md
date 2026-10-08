@@ -303,3 +303,30 @@ Result: modules 1–8 ✓, then **21 consecutive ✗** — every one with
 Note: the module-failure continue-prompts DID render during the owner's run —
 gum widgets draw and erase in place, so they leave no trace in terminal
 scrollback (they look absent in pastes; the user answered them).
+
+## K. UX overhaul for non-technical users (2026-10-08) — 8 tweaks from the owner's test run
+
+Owner drove the full TUI as a beginner and reported 8 friction points. All
+fixed and verified at 80×24 (small terminal).
+
+| # | Friction | Fix | Verified |
+|---|----------|-----|----------|
+| T0 | `curl` missing on stock Ubuntu Server (it is NOT preinstalled) | README quickstart = one self-bootstrapping line (apt installs curl first); install.sh accepts wget too; without either it prints the exact apt command to run | fake-PATH test → friendly die with instructions |
+| T1 | dead air between the install command and preflight | animated `[##....] n/43` download bar (stderr, survives the pipe); boot spinner around the gum bootstrap (download + one-time apt install) | frames captured in pipe test |
+| T2 | checklist: nobody knows how to select | gum 2.0.2 toggles with **x / Tab** (space is dead — verified empirically: space, x, tab, a, ctrl+a); header now says "move: ↑↓ · check/uncheck: x (or Tab) · all: ctrl+a · confirm: ENTER" | tmux drive, toggles render |
+| T3 | "what does Docker_FW [high] even do?" | checklist entries now show title + risk + a short description from the manifest, width-truncated to the terminal | capture: "✓ Journald caps + logrotate [low] — Persistent logs · 200M" |
+| T4 | full-plan pager was a scroll-fest + hidden confirm | replaced by a ONE-PAGE color-coded summary (risk counts, 2-col titles with colored tags, key answers, safety notes) + chooser: "Apply now (ENTER)" / "Read the full change list" / "Cancel" | summary = exactly 24 lines at 80×24; all 3 paths driven (cancel = no snapshot created) |
+| T5 | post-confirm silence feels hung | (same as T1: boot spinners) + chooser gives instant visual response | capture |
+| T6 | long modules show nothing until ✓ | per-module animated "applying… Ns" line (1s ticker) while the module runs; modules that prompt mid-run (admin_user, sshd, ufw, totp, msmtp, docker, cyberpanel) are exempt + get a "may ask you to confirm" note | captured "applying… 2s/10s" during fail2ban's apt |
+| T7 | text overflow on small terminals | long ask headers shortened (the Docker bind-IP question now fits); paragraphs already wrap via gum --width/fold; everything re-verified at exactly 80×24 | checklist/summary/preflight captures clean |
+
+### Bugs found & fixed during K
+33. **checklist parse-back split on spaces** — entries became "Title [risk] —
+    desc" (they contain spaces), but the chosen-string parser used unquoted
+    word-splitting → zero matches → "fatal: no modules selected" after a
+    perfect selection. Fix: line-based read loop. (Also: commas inside
+    manifest titles/descs are swapped to "·" in entries — ui_multi's output
+    is comma-joined, and gum --selected takes a comma list.)
+34. **two animators fought for one line** — the pkg-install spinner overlapped
+    the module animator ("…10s  2ban — downloading packages…"). Fix: removed
+    the pkg spinner; the per-module animator already covers it.

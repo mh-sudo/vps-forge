@@ -28,8 +28,27 @@ for arg in "$@"; do
 	esac
 done
 
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required"
+command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required (apt-get install coreutils)"
+
+# one downloader, curl or wget — minimal Ubuntu server images ship with NEITHER
+FETCH=""
+case "$(command -v curl || command -v wget || true)" in
+*curl) FETCH=curl ;;
+*wget) FETCH=wget ;;
+*)
+	die "this installer needs 'curl' or 'wget' to download the files.
+On Ubuntu/Debian, run:
+    sudo apt-get update && sudo apt-get install -y curl
+then run the install command again."
+	;;
+esac
+
+fetch_to() { # fetch_to <url> <outfile>
+	case "$FETCH" in
+	curl) curl -fsSL --retry 3 --connect-timeout 15 "$1" -o "$2" ;;
+	wget) wget -q --tries=3 --timeout=15 "$1" -O "$2" ;;
+	esac
+}
 
 FILES=(
 	vps-forge
@@ -54,17 +73,34 @@ FILES=(
 mkdir -p "$DEST"
 cd "$DEST"
 say "downloading vps-forge from $BASE_URL"
-curl -fsSL --retry 3 "${BASE_URL%/}/checksums.txt" -o checksums.txt || die "could not fetch checksums.txt"
+fetch_to "${BASE_URL%/}/checksums.txt" checksums.txt || die "could not fetch checksums.txt"
 
+# animated progress: [####....] 12/44 — stderr, so it survives the curl|bash pipe
+total=${#FILES[@]}
+done_n=0
 fail=0
+bar() { # bar <done> <total>
+	local w=22 filled
+	filled=$((done_n * w / total))
+	{
+		printf '\r\033[36m==>\033[0m downloading \033[36m['
+		printf '%*s' "$filled" '' | tr ' ' '#'
+		printf '%*s' "$((w - filled))" '' | tr ' ' '.'
+		printf ']\033[0m %2d/%d %s' "$done_n" "$total" ""
+	} >&2
+}
 for f in "${FILES[@]}"; do
+	done_n=$((done_n + 1))
+	[ -t 2 ] && bar
 	mkdir -p "$(dirname "$f")"
-	curl -fsSL --retry 3 "${BASE_URL%/}/$f" -o "$f" || {
+	fetch_to "${BASE_URL%/}/$f" "$f" || {
+		[ -t 2 ] && printf '\r\033[2K' >&2
 		say "FAILED to download $f"
 		fail=1
 	}
 done
-[ "$fail" = "0" ] || die "download incomplete"
+[ -t 2 ] && printf '\r\033[2K' >&2
+[ "$fail" = "0" ] || die "download incomplete — check your connection and re-run"
 
 say "verifying checksums"
 if ! sha256sum --quiet --ignore-missing -c checksums.txt; then

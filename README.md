@@ -53,13 +53,24 @@ Most "how to secure a VPS" guides fail beginners in the same few places.
 
 ## Quick start
 
-Run this on a fresh server as root, or with sudo:
+Run this on a fresh server as root, or with sudo — **one line, copy-paste**:
+
+```bash
+sudo apt-get update -qq && sudo apt-get install -y curl ca-certificates && sudo curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
+```
+
+Why not just `curl ... | sudo bash`? Because **Ubuntu Server does not come
+with curl preinstalled** (Desktop does; minimal server/cloud images don't).
+The first part of that line installs it in a couple of seconds. If your box
+already has curl (or has wget — the installer accepts either), the short form
+works:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
 ```
 
-The entrypoint is tiny. It downloads the main script, verifies its checksum, and runs it.
+The entrypoint is tiny. It downloads the files, verifies every checksum, shows
+live download progress, and starts the guided setup.
 
 **Prefer to read it first?** Good habit.
 
@@ -244,7 +255,7 @@ vps-forge/
 
 - Ubuntu **22.04** or **24.04** LTS, fresh install recommended
 - Root, or a user with sudo
-- Internet access
+- Internet access, and `curl` or `wget` (the Quick start line installs curl for you — stock Ubuntu Server ships without it)
 - 1 GB RAM minimum for the basics (panels need more, and Vps Forge checks before installing)
 
 ## Threat model
