@@ -243,3 +243,34 @@ Final server state after H: self-clean --scope=all (snapshots intact) + manual
 residue purge; only sshd :22 listening; /root/vps-forge re-synced + checksums
 verified; recording alias removed. GIF pipeline committed: demo-predrive.sh +
 demo-a.tape + demo-b.tape + render-demo.sh (masters gitignored).
+
+## I. Public-launch fix (2026-10-08) — real user hit both failure modes
+
+Owner ran the public quickstart on a fresh box:
+`curl -fsSL <raw>/install.sh | sudo bash` →
+`sudo: unable to resolve host Vpsforge.example.com` +
+`/usr/bin/bash: /usr/bin/bash: cannot execute binary file`.
+
+| # | Test | Result |
+|---|------|--------|
+| I1 | Reproduce on test server (fresh reinstall, password auth, key re-injected) | **REPRODUCED** — both messages exact; line 12 of old install.sh identified |
+| I2 | Pipe path with fixed install.sh (`cat install.sh \| bash -s -- --version` under `script` pty) | **PASS** — downloads all files, checksums OK, tty-handed `exec vps-forge --version` → "Vps Forge 1.0.0", rc=0 |
+| I3 | sysbase hosts repair on the live unresolvable box | **PASS** — 127.0.1.1 line added, `getent hosts` resolves, `sudo -n true` silent (exit 0) |
+| I4 | Idempotency re-run | PASS — "• skipped"; repair logged exactly once |
+
+### Bugs found & fixed during I
+30. **pipe install was fatal** — when piped, `$0` IS the bash binary; the
+    stdin re-exec `exec bash "$0" </dev/tty` tried to run the ELF as a script
+    ("cannot execute binary file"). Re-reading stdin is impossible anyway
+    (bash has consumed the pipe buffer). Fix: no stdin re-exec (the installer
+    never prompts); attach /dev/tty to the FINAL vps-forge exec instead.
+31. **unresolvable hostname left sudo warning forever** — provider images set
+    the hostname without an /etc/hosts entry; every sudo prints "unable to
+    resolve host". Fix: sysbase maps the hostname to 127.0.1.1 (Debian
+    convention) when unresolvable; module check now also requires resolution
+    so later runs repair it.
+
+Note: raw.githubusercontent CDN edges lag on commit by minutes (the BD edge
+served the previous commit while my local edge had the new one) — verified
+the fix via the deployed copy, and the public raw URLs once the edge caught
+up (both confirmed VF_REEXEC-free).
