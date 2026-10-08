@@ -12,7 +12,7 @@ An interactive terminal installer for people who don't want to learn 40 hardenin
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg)](CONTRIBUTING.md)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
+sudo apt-get update -qq && sudo apt-get install -y curl ca-certificates && sudo curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
 ```
 
 <img src="docs/assets/demo.gif" alt="Vps Forge in action: preflight on a fresh Ubuntu VM, picking modules from the risk-tagged checklist, reviewing every change, applying 11 modules with green checks, and a final summary with the Lynis hardening index rising 63 → 71" width="720">
