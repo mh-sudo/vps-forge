@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# vps-forge install.sh — tiny curl|bash entrypoint.
+# Vps Forge install.sh — tiny curl|bash entrypoint.
 # Downloads the project, verifies every file's sha256, runs ./vps-forge.
 set -euo pipefail
 
-BASE_URL="${VF_BASE_URL:-https://raw.githubusercontent.com/example/vps-forge/main}"
+BASE_URL="${VF_BASE_URL:-https://raw.githubusercontent.com/mh-sudo/vps-forge/main}"
 DEST="${VF_DEST:-/root/.vps-forge}"
 
 # When piped (curl | bash), re-exec ourselves with a real tty so prompts work.

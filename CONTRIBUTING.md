@@ -1,6 +1,6 @@
-# Contributing to vps-forge
+# Contributing to Vps Forge
 
-Thanks for wanting to help. vps-forge is deliberately small and strict: every
+Thanks for wanting to help. Vps Forge is deliberately small and strict: every
 feature is a self-contained module, and every module must be safe to re-run on
 a server someone loves.
 

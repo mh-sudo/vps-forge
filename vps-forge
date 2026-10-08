@@ -43,7 +43,7 @@ trap vf_on_interrupt INT TERM
 
 vf_usage() {
 	cat <<'USAGE'
-vps-forge — provision a fresh Ubuntu 22.04/24.04 VPS to production-ready state
+Vps Forge — provision a fresh Ubuntu 22.04/24.04 VPS to production-ready state
 
 USAGE:
   sudo ./vps-forge [FLAGS]              interactive run (TUI)
@@ -137,7 +137,7 @@ vf_main_run() {
 	cfg_load_state                                                  # remembered answers (weakest)
 	[ -n "${VF_CONFIG_FILE:-}" ] && cfg_load_file "$VF_CONFIG_FILE" # explicit file wins
 
-	ui_header "vps-forge $VF_VERSION — Ubuntu VPS provisioning"
+	ui_header "Vps Forge $VF_VERSION — Ubuntu VPS provisioning"
 
 	# preflight BEFORE anything
 	vf_preflight_collect || true
@@ -219,7 +219,7 @@ vf_main_run() {
 # ---------- subcommand dispatch ----------
 
 vf_sub_status() {
-	echo "vps-forge $VF_VERSION — status"
+	echo "Vps Forge $VF_VERSION — status"
 	echo "state dir: $VF_STATE_DIR"
 	echo "snapshots:"
 	{ ls -1dt "$VF_BACKUP_ROOT"/*/ 2>/dev/null || true; } | head -10 | sed 's/^/  /'
@@ -246,7 +246,7 @@ vf_main() {
 			exit 0
 			;;
 		--version)
-			echo "vps-forge $VF_VERSION"
+			echo "Vps Forge $VF_VERSION"
 			exit 0
 			;;
 		--yes) VF_NONINTERACTIVE=1 ;;

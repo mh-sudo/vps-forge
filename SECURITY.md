@@ -1,6 +1,6 @@
 # Security Policy
 
-vps-forge runs as root on servers, so security reports matter.
+Vps Forge runs as root on servers, so security reports matter.
 
 ## Reporting a vulnerability
 
@@ -22,7 +22,7 @@ you'll be credited (or stay anonymous, your choice) in the release notes.
 
 ## Scope
 
-In scope: anything that makes vps-forge weaken a server it runs on — command
+In scope: anything that makes Vps Forge weaken a server it runs on — command
 injection via config values, lockout regressions, checksum-verification bypasses,
 firewall rules that silently fail open, secrets the tool writes to disk.
 
@@ -33,6 +33,6 @@ proof.
 
 ## Supported versions
 
-Only the latest release receives security fixes. vps-forge is beta software:
+Only the latest release receives security fixes. Vps Forge is beta software:
 run it on disposable or rebuildable servers and keep provider console access
 handy.

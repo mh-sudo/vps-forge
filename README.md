@@ -1,6 +1,6 @@
 <div align="center">
 
-# vps-forge
+# Vps Forge
 
 **Turn a brand-new Ubuntu VPS into a secure, fast, production-ready server in minutes.**
 An interactive terminal installer for people who don't want to learn 40 hardening guides first.
@@ -15,7 +15,7 @@ An interactive terminal installer for people who don't want to learn 40 hardenin
 curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh | sudo bash
 ```
 
-<img src="docs/assets/demo.gif" alt="vps-forge in action: preflight on a fresh Ubuntu VM, picking modules from the risk-tagged checklist, reviewing every change, applying 11 modules with green checks, and a final summary with the Lynis hardening index rising 63 → 71" width="720">
+<img src="docs/assets/demo.gif" alt="Vps Forge in action: preflight on a fresh Ubuntu VM, picking modules from the risk-tagged checklist, reviewing every change, applying 11 modules with green checks, and a final summary with the Lynis hardening index rising 63 → 71" width="720">
 <!-- Re-record: see the header of docs/assets/demo-a.tape (3-take flow + render-demo.sh) -->
 <!-- (a real run on a disposable VM: 11 low-risk modules, honest Lynis numbers) -->
 
@@ -23,9 +23,9 @@ curl -fsSL https://raw.githubusercontent.com/mh-sudo/vps-forge/main/install.sh |
 
 ---
 
-## What is vps-forge?
+## What is Vps Forge?
 
-vps-forge is a free, open-source, pure-Bash terminal UI that provisions a fresh **Ubuntu 22.04 or 24.04 VPS** to a production-ready state. It creates a safe admin user, hardens SSH, sets up a firewall that actually works with Docker, installs Fail2ban and automatic security updates, tunes the kernel and memory, installs Docker, and can deploy a self-hosting panel like Coolify or CloudPanel.
+Vps Forge is a free, open-source, pure-Bash terminal UI that provisions a fresh **Ubuntu 22.04 or 24.04 VPS** to a production-ready state. It creates a safe admin user, hardens SSH, sets up a firewall that actually works with Docker, installs Fail2ban and automatic security updates, tunes the kernel and memory, installs Docker, and can deploy a self-hosting panel like Coolify or CloudPanel.
 
 You pick a profile, review exactly what will change, confirm, and it does the rest. Every change is backed up first, and anything that could lock you out has an automatic rollback timer.
 
@@ -38,11 +38,11 @@ It works on any provider that gives you Ubuntu and root: Hetzner, DigitalOcean, 
 - You use Docker and want published ports to be private by default.
 - You're comfortable on the command line and are tired of pasting the same 200 lines into every new box.
 
-## Why people lose servers (and what vps-forge does about it)
+## Why people lose servers (and what Vps Forge does about it)
 
 Most "how to secure a VPS" guides fail beginners in the same few places.
 
-| Common failure | What vps-forge does |
+| Common failure | What Vps Forge does |
 |---|---|
 | Changing the SSH port or disabling passwords and getting locked out | Validates with `sshd -t`, applies changes behind a timed auto-revert, and makes you confirm from a **new session** before the timer is cancelled |
 | Turning on UFW before allowing SSH | Refuses. The active SSH port is allowed first, always |
@@ -70,7 +70,7 @@ less install.sh          # the whole entrypoint
 sudo ./vps-forge
 ```
 
-**Keep a second SSH session open the entire time.** vps-forge will remind you, but it's the best safety net you have.
+**Keep a second SSH session open the entire time.** Vps Forge will remind you, but it's the best safety net you have.
 
 ## What you'll see
 
@@ -139,7 +139,7 @@ It's built for an 80-column terminal, handles Ctrl+C safely, and uses one accent
 - Only the ports the panel needs get opened, an admin password is generated and shown once, and the final access URL is printed
 
 > [!WARNING]
-> **CyberPanel has a history of serious security vulnerabilities**, and real servers have been compromised through them. If you pick it, vps-forge shows a visible warning and an extra hardening checklist. If you have a choice, consider Coolify or CloudPanel instead.
+> **CyberPanel has a history of serious security vulnerabilities**, and real servers have been compromised through them. If you pick it, Vps Forge shows a visible warning and an extra hardening checklist. If you have a choice, consider Coolify or CloudPanel instead.
 
 </details>
 
@@ -149,7 +149,7 @@ This is the one that quietly bites people.
 
 When you publish a container port (`-p 8080:80`), Docker adds its own iptables rules that run **before** UFW's. So `ufw deny 8080` does nothing, and your "private" database or admin tool is open to the whole internet. Docker's own documentation describes this behavior.
 
-vps-forge handles it with the supported approach: custom filtering in the `DOCKER-USER` chain, which Docker evaluates before its own rules.
+Vps Forge handles it with the supported approach: custom filtering in the `DOCKER-USER` chain, which Docker evaluates before its own rules.
 
 - Published container ports are **not reachable from outside** by default
 - Established traffic and traffic between containers on Docker networks keep working
@@ -245,11 +245,11 @@ vps-forge/
 - Ubuntu **22.04** or **24.04** LTS, fresh install recommended
 - Root, or a user with sudo
 - Internet access
-- 1 GB RAM minimum for the basics (panels need more, and vps-forge checks before installing)
+- 1 GB RAM minimum for the basics (panels need more, and Vps Forge checks before installing)
 
 ## Threat model
 
-**vps-forge helps defend against:** automated SSH brute-forcing, exposed container ports, weak default SSH and kernel settings, unpatched packages, and misconfiguration lockouts.
+**Vps Forge helps defend against:** automated SSH brute-forcing, exposed container ports, weak default SSH and kernel settings, unpatched packages, and misconfiguration lockouts.
 
 **It does not replace:** application security, secrets management, a proper backup strategy you've tested, or monitoring someone actually looks at. A hardened server running a vulnerable app is still a vulnerable app.
 
@@ -258,13 +258,13 @@ vps-forge/
 ## FAQ
 
 **How do I secure a new Ubuntu VPS?**
-At minimum: create a non-root sudo user, use SSH keys and disable password login, enable a default-deny firewall, install Fail2ban, and turn on automatic security updates. vps-forge's Minimal profile does all of that, with lockout protection.
+At minimum: create a non-root sudo user, use SSH keys and disable password login, enable a default-deny firewall, install Fail2ban, and turn on automatic security updates. Vps Forge's Minimal profile does all of that, with lockout protection.
 
 **Does `ufw deny` protect Docker containers?**
-No. Docker publishes ports through iptables rules that are processed before UFW's, so UFW rules don't block them. The supported fix is filtering in the `DOCKER-USER` chain, which vps-forge configures for you.
+No. Docker publishes ports through iptables rules that are processed before UFW's, so UFW rules don't block them. The supported fix is filtering in the `DOCKER-USER` chain, which Vps Forge configures for you.
 
-**Will vps-forge lock me out of my server?**
-It's designed not to. SSH and firewall changes are validated, applied with an automatic rollback timer, and only kept after you confirm from a new connection. It also refuses to disable password login without a verified key. Your provider's web console is the last-resort recovery path, and vps-forge tells you how to reach it.
+**Will Vps Forge lock me out of my server?**
+It's designed not to. SSH and firewall changes are validated, applied with an automatic rollback timer, and only kept after you confirm from a new connection. It also refuses to disable password login without a verified key. Your provider's web console is the last-resort recovery path, and Vps Forge tells you how to reach it.
 
 **Can I undo what it did?**
 Yes. Every file it touches is backed up first, and `vps-forge rollback` restores them. `vps-forge self-clean` removes everything vps-forge applied.
@@ -278,18 +278,18 @@ Not yet. Ubuntu 22.04 and 24.04 only for now.
 **Which VPS providers work?**
 Any that give you Ubuntu with root or sudo access.
 
-**vps-forge or Ansible?**
-Ansible is great if you manage many servers and want to write playbooks. vps-forge is for one or a few servers, guided, with no setup and no YAML to learn first. They solve different problems.
+**Vps Forge or Ansible?**
+Ansible is great if you manage many servers and want to write playbooks. Vps Forge is for one or a few servers, guided, with no setup and no YAML to learn first. They solve different problems.
 
-**vps-forge or a hosting panel?**
-Panels manage apps. vps-forge secures and prepares the server underneath, and can install a panel for you afterward.
+**Vps Forge or a hosting panel?**
+Panels manage apps. Vps Forge secures and prepares the server underneath, and can install a panel for you afterward.
 
 **Can I use it in cloud-init or CI?**
 Yes, via `--yes --profile=... --config=...`.
 
 ## Status
 
-vps-forge is **beta**. Live-tested end to end on Ubuntu 24.04 (2 vCPU / 2 GB KVM: module runs, full profiles, idempotency re-runs, lockout failsafes, Docker firewall proofs, all three panels, rollback and self-clean); 22.04 is supported in code but not yet live-tested. The full log is in [TESTING.md](TESTING.md). Please read the review screen before confirming, and open an issue if anything surprises you.
+Vps Forge is **beta**. Live-tested end to end on Ubuntu 24.04 (2 vCPU / 2 GB KVM: module runs, full profiles, idempotency re-runs, lockout failsafes, Docker firewall proofs, all three panels, rollback and self-clean); 22.04 is supported in code but not yet live-tested. The full log is in [TESTING.md](TESTING.md). Please read the review screen before confirming, and open an issue if anything surprises you.
 
 ## Development
 
@@ -313,6 +313,6 @@ Found a vulnerability? Please don't open a public issue. See [SECURITY.md](SECUR
 
 <div align="center">
 
-If vps-forge saved you an afternoon (or a server), a ⭐ helps other beginners find it.
+If Vps Forge saved you an afternoon (or a server), a ⭐ helps other beginners find it.
 
 </div>

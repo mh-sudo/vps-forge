@@ -141,7 +141,7 @@ module_plan_all() { # -> writes human-readable plan to $VF_PLAN_FILE
 	VF_PLAN_FILE="$VF_TMP_DIR/plan.txt"
 	local id idx
 	{
-		echo "vps-forge $VF_VERSION — planned changes"
+		echo "Vps Forge $VF_VERSION — planned changes"
 		echo "server: $(hostname) — $(date -u)"
 		echo "modules: ${RUN_ORDER[*]}"
 		echo
@@ -232,7 +232,7 @@ report_write() {
 	local f="$VF_REPORT_FILE" i idx id
 	{
 		echo "════════════════════════════════════════════════"
-		echo " vps-forge $VF_VERSION — run report"
+		echo " Vps Forge $VF_VERSION — run report"
 		echo " $(date -u '+%Y-%m-%d %H:%M:%S UTC') on $(hostname)"
 		echo "════════════════════════════════════════════════"
 		echo

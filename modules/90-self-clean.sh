@@ -5,7 +5,7 @@
 
 self_clean() { # self_clean [scope]
 	local scope="${1:-all}"
-	ui_header "vps-forge self-clean (scope: $scope)"
+	ui_header "Vps Forge self-clean (scope: $scope)"
 	ui_warn "This removes vps-forge's users, packages, config files, firewall rules, Docker
 containers/images, timers and snapshots, and restores original config files from
 the FIRST snapshot. It is designed to return the server close to a fresh state."
