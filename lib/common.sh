@@ -15,7 +15,10 @@ VF_LOG_FILE="/var/log/vps-forge.log"
 VF_REPORT_FILE="/root/vps-forge-report.txt"
 # shellcheck disable=SC2034
 VF_ETC_DIR="/etc/vps-forge"
-VF_TMP_DIR="$(mktemp -d /tmp/vps-forge.XXXXXX)" # per-process scratch
+# per-process scratch — /run, NOT /tmp: the tmpfs module mounts a fresh
+# tmpfs over /tmp mid-run, which would shadow this directory and fail
+# every later module's log redirection ("mod-X.log: No such file or")
+VF_TMP_DIR="$(mktemp -d /run/vps-forge.XXXXXX)"
 # shellcheck disable=SC2034
 VF_MODULE_DIR="$VF_ROOT/modules"
 VF_NONINTERACTIVE="${VF_NONINTERACTIVE:-0}"

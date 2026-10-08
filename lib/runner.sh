@@ -163,6 +163,7 @@ module_run_all() {
 	for id in "${RUN_ORDER[@]}"; do
 		n=$((n + 1))
 		idx="$(manifest_index_of "$id")"
+		mkdir -p "$VF_TMP_DIR" 2>/dev/null || true # self-heal if something removed our scratch
 		ui_header "[$n/$total] ${M_TITLES[$idx]}"
 		RUN_STATUS[$((n - 1))]="pending"
 		RUN_DETAIL[$((n - 1))]=""

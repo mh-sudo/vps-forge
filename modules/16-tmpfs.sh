@@ -19,7 +19,7 @@ mod_tmpfs_check() { [ "$(findmnt -n -o FSTYPE /tmp 2>/dev/null)" = "tmpfs" ]; }
 
 mod_tmpfs_run() {
 	if ! cfg_is_true perf.tmpfs_tmp && [ "$VF_NONINTERACTIVE" = "1" ]; then return 0; fi
-	ui_warn "/tmp will be RAM-backed and WIPED ON REBOOT (up to $(cfg_get perf.tmpfs_size 1G) of RAM when full)."
+	ui_warn "/tmp will be RAM-backed and WIPED ON REBOOT (up to $(cfg_get perf.tmpfs_size 1G) of RAM when full). Files currently in /tmp become hidden until the next reboot."
 	if ! grep -qE '^\s*[^#].*\s/tmp\s+tmpfs' /etc/fstab; then
 		vf_backup_file /etc/fstab
 		printf 'tmpfs /tmp tmpfs rw,nosuid,nodev,noatime,size=%s,mode=1777 0 0\n' "$(cfg_get perf.tmpfs_size 1G)" >>/etc/fstab
