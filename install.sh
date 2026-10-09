@@ -3,7 +3,8 @@
 # Downloads the project, verifies every file's sha256, runs ./vps-forge.
 set -euo pipefail
 
-BASE_URL="${VF_BASE_URL:-https://raw.githubusercontent.com/mh-sudo/vps-forge/main}"
+REF="${VF_REF:-main}" # P10: pin this to the release tag (e.g. v0.2.0)
+BASE_URL="${VF_BASE_URL:-https://raw.githubusercontent.com/mh-sudo/vps-forge/${REF}}"
 DEST="${VF_DEST:-/root/.vps-forge}"
 
 say() { printf '\033[36m==>\033[0m %s\n' "$*" >&2; }
@@ -14,19 +15,26 @@ die() {
 
 [ "$(id -u)" = "0" ] || die "run as root:  curl -fsSL <url>/install.sh | sudo bash"
 
-# tiny arg parser: --base-url=... --dest=...
+# tiny arg parser — consumed flags are STRIPPED from what we pass to vps-forge
+# (it rejects unknown flags, so forwarding them used to break the run)
+PASS_ARGS=()
 for arg in "$@"; do
 	case "$arg" in
 	--base-url=*) BASE_URL="${arg#*=}" ;;
 	--dest=*) DEST="${arg#*=}" ;;
+	--ref=*)
+		REF="${arg#*=}"
+		BASE_URL="https://raw.githubusercontent.com/mh-sudo/vps-forge/${REF}"
+		;;
 	--help | -h)
-		echo "usage: curl -fsSL <url>/install.sh | sudo bash [--base-url=URL] [--dest=DIR] [vps-forge flags]"
-		echo "   or: sudo bash -s -- [--base-url=URL] [--dest=DIR] [vps-forge flags]"
+		echo "usage: curl -fsSL <url>/install.sh | sudo bash [--base-url=URL] [--dest=DIR] [--ref=TAG] [vps-forge flags]"
+		echo "   or: sudo bash -s -- [--base-url=URL] [--dest=DIR] [--ref=TAG] [vps-forge flags]"
 		exit 0
 		;;
-	*) ;;
+	*) PASS_ARGS+=("$arg") ;;
 	esac
 done
+[ -n "$DEST" ] || die "--dest needs a non-empty directory"
 
 command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required (apt-get install coreutils)"
 
@@ -70,8 +78,12 @@ FILES=(
 	modules/90-self-clean.sh
 )
 
-mkdir -p "$DEST"
-cd "$DEST"
+# download into a staging dir and verify BEFORE touching the real destination:
+# an interrupted update used to leave stale files from older versions behind
+STAGE="${DEST}.new"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cd "$STAGE"
 say "downloading vps-forge from $BASE_URL"
 fetch_to "${BASE_URL%/}/checksums.txt" checksums.txt || die "could not fetch checksums.txt"
 
@@ -103,18 +115,35 @@ done
 [ "$fail" = "0" ] || die "download incomplete — check your connection and re-run"
 
 say "verifying checksums"
-if ! sha256sum --quiet --ignore-missing -c checksums.txt; then
+# build the checksum list for EXACTLY the files we downloaded — every file must
+# have an entry (no --ignore-missing: an unlisted file would otherwise run
+# unverified as root)
+: >checksums.partial
+for f in "${FILES[@]}"; do
+	line="$(grep -E "^[0-9a-f]{64}  ${f}\$" checksums.txt || true)"
+	[ -n "$line" ] || die "checksums.txt has no entry for $f — refusing to run unverified"
+	printf '%s\n' "$line" >>checksums.partial
+done
+if [ "$(wc -l <checksums.partial)" -ne "${#FILES[@]}" ]; then
+	die "checksums.txt coverage mismatch — refusing to run"
+fi
+if ! sha256sum --quiet -c checksums.partial; then
 	die "CHECKSUM MISMATCH — the downloaded files do not match checksums.txt. Aborting."
 fi
 
 chmod +x vps-forge
+rm -rf "$DEST"
+mv "$STAGE" "$DEST"
 say "checksums OK — starting vps-forge in $DEST"
 
 # When piped (curl | bash) stdin is the exhausted pipe — hand the TUI the
 # real terminal instead, so its prompts work. (We must NOT re-exec ourselves:
 # in a pipe, $0 is the bash BINARY, and "exec bash $0" dies with
 # "cannot execute binary file". There are no prompts before this point.)
-if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-	exec bash "$DEST/vps-forge" "$@" </dev/tty
+# The probe OPENS /dev/tty — a permission test like `-r /dev/tty` passes for
+# root even with no controlling terminal (cloud-init/CI), and the later
+# open would then fail under set -e without ever starting vps-forge.
+if (: </dev/tty) 2>/dev/null; then
+	exec bash "$DEST/vps-forge" ${PASS_ARGS+"${PASS_ARGS[@]}"} </dev/tty
 fi
-exec bash "$DEST/vps-forge" "$@"
+exec bash "$DEST/vps-forge" ${PASS_ARGS+"${PASS_ARGS[@]}"}

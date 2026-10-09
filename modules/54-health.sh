@@ -13,12 +13,32 @@ PLAN
 mod_health_check() { systemctl is-enabled --quiet vps-forge-health.timer 2>/dev/null; }
 
 mod_health_run() {
+	local webhook
+	webhook="$(cfg_get health.webhook "")"
+	# the webhook is interpolated into a root-run script AND a JSON body —
+	# reject anything that is not a plain http(s) URL (no quotes, backticks,
+	# shell or JSON metacharacters)
+	if [ -n "$webhook" ]; then
+		case "$webhook" in
+		https://* | http://*) ;;
+		*)
+			ui_error "health.webhook must start with http:// or https:// — got: $webhook"
+			return 1
+			;;
+		esac
+		case "$webhook" in
+		*['"'\''`\\']* | *'$('*)
+			ui_error "health.webhook contains quote/backtick/shell metacharacters — refusing (use a plain URL)"
+			return 1
+			;;
+		esac
+	fi
 	vf_ensure_dir /usr/local/sbin
 	vf_write_file /usr/local/sbin/vps-forge-health 755 <<EOF
 #!/usr/bin/env bash
-# vps-forge health probe — webhook: $(cfg_get health.webhook "")
+# vps-forge health probe — webhook: $webhook
 set -u
-WEBHOOK="$(cfg_get health.webhook "")"
+WEBHOOK="$webhook"
 HIST=/var/lib/vps-forge/health-history.log
 PROBLEMS=""
 [ "\$(systemctl is-active ssh)" = "active" ] || PROBLEMS+="ssh service DOWN; "

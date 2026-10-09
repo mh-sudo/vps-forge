@@ -48,6 +48,19 @@ vf_preflight_render() { # -> exit 0 = sane to continue, 1 = blocked
 	if ! vf_os_supported; then
 		problems="- This is not Ubuntu 22.04 or 24.04 LTS (detected: ${PF[os]}). vps-forge only supports 22.04/24.04."
 	fi
+	# vps-forge manages the box THROUGH systemd (units, timers, ssh restarts):
+	# neither a container nor a non-systemd PID 1 can be provisioned sanely
+	if [ ! -d /run/systemd/system ]; then
+		problems+=$'\n'"- systemd is not running (PID 1 is not systemd) — vps-forge requires systemd."
+	fi
+	local cvirt
+	cvirt="$(systemd-detect-virt -c 2>/dev/null || true)"
+	case "$cvirt" in
+	"" | none) : ;;
+	*)
+		problems+=$'\n'"- This is a container ($cvirt) — systemd units, ufw and sshd restarts will not behave like a real VPS."
+		;;
+	esac
 	[ "${PF[ram_mb]:-0}" -lt 900 ] 2>/dev/null && problems+=$'\n'"- Less than 900 MB RAM — several modules (Docker, panels) will fail."
 	[ "${PF[disk_free_gb]:-0}" -lt 4 ] 2>/dev/null && problems+=$'\n'"- Less than 4 GB free disk."
 	[ -z "${PF[ssh_ports]}" ] && problems+=$'\n'"- Could not detect the SSH listening port — refusing to touch the firewall."

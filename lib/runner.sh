@@ -57,9 +57,12 @@ vf_entry_text() { # vf_entry_text title risk desc -> checklist line (comma-free,
 VF_PROGRESS_ANIM_PID=""
 vf_module_progress_start() { # animated "applying… Ns" line on stdout while a module runs
 	[ -t 1 ] || return 0
+	local parent=$$
 	(
-		local frames=('|' / '-' '\\') i=0
-		while kill -0 "$PPID" 2>/dev/null && [ "$i" -lt 7200 ]; do
+		# '\', not '\\': the old array printed TWO backslashes for one frame
+		local frames=('\|' / '-' '\') i=0
+		# bounded at 1h even if the parent becomes an unreaped zombie
+		while kill -0 "$parent" 2>/dev/null && [ "$i" -lt 3600 ]; do
 			printf '\r  \033[36m%s\033[0m applying… %ds  ' "${frames[$((i % 4))]}" "$i"
 			i=$((i + 1))
 			sleep 1
@@ -94,15 +97,29 @@ vf_review_summary() { # one-page color-coded summary of what will change
 		cols+=("$(ui_risk_ansi "$risk")")
 	done
 	ui_header "Review — $total module(s) will be applied"
-	printf '  risk level: \033[32m%d low\033[0m · \033[33m%d medium\033[0m · \033[31m%d high\033[0m · \033[35m%d critical\033[0m\n' \
-		"$n_low" "$n_med" "$n_high" "$n_crit" >&2
+	if [ "$VF_COLOR" = 1 ]; then
+		printf '  risk level: \033[32m%d low\033[0m · \033[33m%d medium\033[0m · \033[31m%d high\033[0m · \033[35m%d critical\033[0m\n' \
+			"$n_low" "$n_med" "$n_high" "$n_crit" >&2
+	else
+		printf '  risk level: %d low · %d medium · %d high · %d critical\n' \
+			"$n_low" "$n_med" "$n_high" "$n_crit" >&2
+	fi
 	for ((i = 0; i < total; i += 2)); do
-		if [ $((i + 1)) -lt "$total" ]; then
-			printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' \
-				"${titles[$i]}" "${cols[$i]}" "${tags[$i]}" \
-				"${titles[$((i + 1))]}" "${cols[$((i + 1))]}" "${tags[$((i + 1))]}" >&2
+		if [ "$VF_COLOR" = 1 ]; then
+			if [ $((i + 1)) -lt "$total" ]; then
+				printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' \
+					"${titles[$i]}" "${cols[$i]}" "${tags[$i]}" \
+					"${titles[$((i + 1))]}" "${cols[$((i + 1))]}" "${tags[$((i + 1))]}" >&2
+			else
+				printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' "${titles[$i]}" "${cols[$i]}" "${tags[$i]}" >&2
+			fi
 		else
-			printf '  \033[1m%s\033[0m \033[%sm[%s]\033[0m\n' "${titles[$i]}" "${cols[$i]}" "${tags[$i]}" >&2
+			if [ $((i + 1)) -lt "$total" ]; then
+				printf '  %s [%s]  %s [%s]\n' \
+					"${titles[$i]}" "${tags[$i]}" "${titles[$((i + 1))]}" "${tags[$((i + 1))]}" >&2
+			else
+				printf '  %s [%s]\n' "${titles[$i]}" "${tags[$i]}" >&2
+			fi
 		fi
 	done
 	ui_info ""
@@ -112,12 +129,34 @@ vf_review_summary() { # one-page color-coded summary of what will change
 	ui_info "SSH/firewall changes auto-revert until you confirm from a NEW connection."
 }
 
+run_order_sort_by_manifest() { # reorder RUN_ORDER to manifest order (in place)
+	local sorted=() i r
+	for i in "${!M_IDS[@]}"; do
+		for r in "${RUN_ORDER[@]}"; do [ "${M_IDS[$i]}" = "$r" ] && sorted+=("$r"); done
+	done
+	RUN_ORDER=("${sorted[@]}")
+}
+
+run_order_dedup() { # drop duplicate ids from RUN_ORDER (in place)
+	local seen=() out=() r dup=0
+	for r in "${RUN_ORDER[@]}"; do
+		dup=0
+		local s
+		for s in "${seen[@]:-}"; do [ "$s" = "$r" ] && dup=1; done
+		[ "$dup" = "0" ] && {
+			seen+=("$r")
+			out+=("$r")
+		}
+	done
+	RUN_ORDER=("${out[@]}")
+}
+
 selection_pick() { # interactive/custom selection; sets RUN_ORDER from ids list or profile
 	local requested="$1" i idx id
 	if [ "$requested" != "custom" ]; then
 		local sel
 		sel="$(profile_module_ids "$requested")"
-		[ -n "$sel" ] || vf_die "unknown profile: $requested (use minimal|recommended|dockerhost|custom)"
+		[ -n "$sel" ] || vf_die "unknown profile: $requested (use minimal|recommended|dockerhost|custom — 'docker-host' is accepted and normalized)"
 		for id in $sel; do RUN_ORDER+=("$id"); done
 	else
 		# entries show title + risk + a short description (from the manifest);
@@ -164,7 +203,7 @@ selection_pick() { # interactive/custom selection; sets RUN_ORDER from ids list 
 		for r in "${RUN_ORDER[@]}"; do case "$r" in panel_*) has_panel="$r" ;; esac done
 		for r in "${RUN_ORDER[@]}"; do
 			if [ "$r" = "reverse_proxy" ]; then
-				ui_warn "dropping the reverse-proxy module — the panel (${has_panel#panel-}) owns ports 80/443"
+				ui_warn "dropping the reverse-proxy module — the panel (${has_panel#panel_}) owns ports 80/443"
 				continue
 			fi
 			again+=("$r")
@@ -184,11 +223,7 @@ selection_pick() { # interactive/custom selection; sets RUN_ORDER from ids list 
 		fi
 	fi
 	# sort by manifest order
-	local sorted=()
-	for i in "${!M_IDS[@]}"; do
-		for r in "${RUN_ORDER[@]}"; do [ "${M_IDS[$i]}" = "$r" ] && sorted+=("$r"); done
-	done
-	RUN_ORDER=("${sorted[@]}")
+	run_order_sort_by_manifest
 	[ "${#RUN_ORDER[@]}" -gt 0 ] || vf_die "no modules selected"
 	vf_log_info "selected modules: ${RUN_ORDER[*]}"
 }
@@ -263,7 +298,24 @@ module_run_all() {
 			ui_info "(this step may ask you to confirm — watch for a question)"
 		fi
 		[ "$prompting" = "0" ] && vf_module_progress_start
-		if "mod_${id}_run" 2>>"$VF_TMP_DIR/mod-$id.log"; then
+		# run OUTSIDE an if-condition: inside `( )` the module gets real errexit,
+		# so an unexpected command failure fails the module instead of being
+		# swallowed (an `if mod_run` context disables set -e for the whole module).
+		# exit codes: 0 = ok, 2 = user declined (recorded as a skip, not applied),
+		# anything else = failure.
+		local rc=0
+		(
+			set -Eeuo pipefail
+			trap 'exit $?' ERR
+			"mod_${id}_run"
+		) 2>>"$VF_TMP_DIR/mod-$id.log" || rc=$?
+		if [ "$rc" -eq 2 ]; then
+			vf_module_progress_stop
+			ui_skip "${M_TITLES[$idx]} (declined — not applied)"
+			RUN_STATUS[$((n - 1))]="skipped"
+			RUN_DETAIL[$((n - 1))]="declined by user"
+			vf_log_info "module $id: skipped (declined by user)"
+		elif [ "$rc" -eq 0 ]; then
 			vf_module_progress_stop
 			ui_ok "${M_TITLES[$idx]}"
 			RUN_STATUS[$((n - 1))]="ok"
@@ -272,7 +324,6 @@ module_run_all() {
 				printf '%s\n' "$(date -u +%FT%TZ)" >"$VF_STATE_DIR/applied/$id.done"
 			}
 		else
-			rc=$?
 			vf_module_progress_stop
 			ui_fail "${M_TITLES[$idx]} (exit $rc) — see $(basename "$VF_LOG_FILE")"
 			tail -5 "$VF_TMP_DIR/mod-$id.log" >&2 || true

@@ -35,6 +35,7 @@ mod_admin_user_ask() {
 				pub="$(vf_ask admin.pubkey "Public key (ssh-ed25519 AAAA... comment)" "")"
 			fi
 		fi
+		vf_validate_pubkey "$pub" || return 1
 		cfg_set admin.pubkey "$pub"
 		if vf_ask_bool admin.disable_root_login "Disable direct root SSH login after the admin key is verified?" y; then
 			cfg_set admin.disable_root_login y
@@ -42,6 +43,27 @@ mod_admin_user_ask() {
 			cfg_set admin.disable_root_login n
 		fi
 	fi
+}
+
+# vf_validate_pubkey <key> — reject placeholders (copy-pasted example configs
+# must never give a stranger's key SSH access) and non-key strings; empty = ok
+# (module then reuses root's key or generates one)
+vf_validate_pubkey() {
+	local pub="$1"
+	[ -n "$pub" ] || return 0
+	case "$pub" in
+	*"<"* | *YOUR* | *your_* | *PLACEHOLDER* | *EXAMPLE* | *REPLACE*)
+		ui_error "admin.pubkey looks like a placeholder — paste a REAL public key (ssh-ed25519 AAAA... )"
+		return 1
+		;;
+	esac
+	case "$pub" in
+	ssh-ed25519\ * | ssh-rsa\ * | ecdsa-sha2-*\ * | ssh-dss\ *) return 0 ;;
+	*)
+		ui_error "admin.pubkey does not look like an SSH public key (expected: ssh-ed25519 AAAA...)"
+		return 1
+		;;
+	esac
 }
 
 mod_admin_user_run() {
@@ -55,11 +77,13 @@ mod_admin_user_run() {
 		ui_para "user '$u' already exists — ensuring sudo membership and key"
 	else
 		useradd -m -d "/home/$u" -s /bin/bash -G sudo "$u"
+		vf_note_created_user "$u"
 	fi
 
 	# random password, forced change on first login
 	if ! passwd -S "$u" 2>/dev/null | awk '{print $2}' | grep -q '^P$'; then
 		pw="$(vf_random_password 20)"
+		vf_secret_register "$pw"
 		printf '%s:%s\n' "$u" "$pw" | chpasswd
 		chage -d 0 "$u" 2>/dev/null || true
 		vf_save_credential "admin-${u}-password.txt" \
@@ -74,6 +98,7 @@ mod_admin_user_run() {
 	if [ -z "$pub" ] && [ -s /root/.ssh/authorized_keys ]; then
 		pub="$(head -1 /root/.ssh/authorized_keys)"
 	fi
+	vf_validate_pubkey "$pub" || return 1
 	if [ -n "$pub" ]; then
 		install -d -m 700 -o "$u" -g "$u" "/home/$u/.ssh"
 		printf '%s\n' "$pub" >"$keyfile.new"

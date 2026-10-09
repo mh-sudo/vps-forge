@@ -33,6 +33,15 @@ mod_msmtp_run() {
 		return 0
 	fi
 	vf_pkg_install msmtp-mta bsd-mailx
+	vf_secret_register "$(cfg_get msmtp.pass "")"
+	# msmtp config values must be quoted — a password with spaces or '#' would
+	# otherwise end the value / comment out the rest of the line
+	__mq() { # shell-quote a value for /etc/msmtprc
+		local s="$1"
+		s="${s//\\/\\\\}"
+		s="${s//\"/\\\"}"
+		printf '"%s"' "$s"
+	}
 	local tls="tls"
 	[ "$(cfg_get msmtp.port 587)" = "465" ] && tls="ssl"
 	vf_write_file /etc/msmtprc 640 <<EOF
@@ -44,11 +53,11 @@ tls_trust_file /etc/ssl/certs/ca-certificates.crt
 logfile        /var/log/msmtp.log
 
 account        default
-host           $(cfg_get msmtp.host "")
-port           $(cfg_get msmtp.port 587)
-from           $(cfg_get msmtp.from "")
-user           $(cfg_get msmtp.user "")
-password       $(cfg_get msmtp.pass "")
+host           $(__mq "$(cfg_get msmtp.host "")")
+port           $(__mq "$(cfg_get msmtp.port 587)")
+from           $(__mq "$(cfg_get msmtp.from "")")
+user           $(__mq "$(cfg_get msmtp.user "")")
+password       $(__mq "$(cfg_get msmtp.pass "")")
 $([ "$tls" = ssl ] && echo "tls_starttls off")
 
 aliases        /etc/aliases

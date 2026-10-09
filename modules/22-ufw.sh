@@ -63,13 +63,21 @@ mod_ufw_run() {
 	ufw logging low >/dev/null 2>&1 || true
 	vf_ufw_safe_enable || return 1
 
-	# fail-open change: internal checks passed (ssh ports allowed + ufw active),
-	# so the guarded enable is confirmed automatically in non-interactive runs
+	# fail-open change: the ufw status check (in vf_confirm_new_session) proved
+	# the ssh port is allowed, so the guarded enable is confirmed automatically
+	# in non-interactive runs
 	if ! vf_confirm_new_session "SSH still reachable with the firewall on" "failopen"; then
 		ui_warn "not confirmed — the auto-revert guard will disable UFW shortly"
 		return 1
 	fi
-	vf_guard_cancel ufw
+	if ! vf_guard_cancel ufw; then
+		ui_error "the auto-revert guard already fired — UFW was disabled; re-run this module"
+		return 1
+	fi
+	if ! vf_ufw_active; then
+		ui_error "ufw is not active after confirmation — treating as failure"
+		return 1
+	fi
 	ufw status verbose | sed 's/^/  /' >&2 || true
 	return 0
 }

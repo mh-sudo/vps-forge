@@ -55,8 +55,10 @@ USAGE:
   sudo ./vps-forge docker-fw-status     show DOCKER-USER rules
   sudo ./vps-forge backup-test          snapshot + restore test of the backup config
   sudo ./vps-forge panel-remove NAME    uninstall a panel (coolify|cloudpanel|cyberpanel)
-  sudo ./vps-forge self-clean [--scope=all|panels|docker|hardening] [--yes]
-                                        remove everything vps-forge applied (DANGEROUS)
+	  sudo ./vps-forge self-clean [--scope=all|panels|docker|hardening] [--yes]
+	                                remove everything vps-forge applied (DANGEROUS;
+	                                requires typing 'self-clean' unless --yes/--yes-clean;
+	                                scope=hardening restores config files only)
   vps-forge status                      run state, snapshots, armed guards
   vps-forge guard-cancel NAME           cancel an armed auto-revert guard (sshd|ufw|...)
 
@@ -149,7 +151,12 @@ vf_main_run() {
 			exit 0
 		}
 	else
-		vf_preflight_render || true
+		# --yes is not a licence to ignore a broken environment (unsupported OS,
+		# no detectable ssh port): scripted runs must see the failure too
+		vf_preflight_render || {
+			ui_error "preflight failed — aborting (--yes does not bypass environment checks)"
+			exit 1
+		}
 	fi
 
 	manifest_load
@@ -158,13 +165,26 @@ vf_main_run() {
 	local profile="${VF_PROFILE:-}"
 	if [ -z "$profile" ] && [ -n "${VF_MODULES:-}" ]; then profile=explicit; fi
 	if [ "$profile" = "explicit" ]; then
-		local m
+		local m id
 		IFS=',' read -ra m <<<"$VF_MODULES"
-		# shellcheck disable=SC2034  # array declared in lib/runner.sh
-		RUN_ORDER=("${m[@]}")
+		RUN_ORDER=()
+		for id in "${m[@]}"; do
+			id="$(printf '%s' "$id" | tr -d '[:space:]')"
+			[ -n "$id" ] || continue
+			# an unknown id would otherwise silently pick the wrong manifest row
+			if [ -z "$(manifest_index_of "$id")" ]; then
+				ui_warn "unknown module id '$id' — skipped (see: ./vps-forge --help, ids in modules/manifest.conf)"
+				continue
+			fi
+			RUN_ORDER+=("$id")
+		done
+		run_order_dedup
+		# explicit lists ignore manifest order (user may type "docker_fw,docker"):
+		# reorder so prerequisites like docker run before their dependents
+		run_order_sort_by_manifest
 	elif [ -z "$profile" ]; then
 		if [ "$VF_NONINTERACTIVE" = "1" ]; then
-			vf_die "--yes requires --profile=minimal|recommended|docker-host|custom (or --module=...)"
+			vf_die "--yes requires --profile=minimal|recommended|dockerhost|custom (or --module=...)"
 		fi
 		profile="$(ui_choose "Choose a profile" \
 			"recommended - balanced hardening + optimization" \
@@ -173,6 +193,11 @@ vf_main_run() {
 			"custom - pick modules yourself")"
 		profile="${profile%% -*}"
 		profile="$(printf '%s' "$profile" | tr -d ' ')"
+	fi
+	# normalize the spelling: the manifest tag is 'dockerhost' and both the
+	# flag and the TUI historically said 'docker-host' (empty selection = lockout)
+	if [ -n "$profile" ] && [ "$profile" != "explicit" ]; then
+		profile="$(printf '%s' "$profile" | tr -d ' -')"
 	fi
 	cfg_set profile "$profile"
 	if [ "$profile" != "explicit" ]; then selection_pick "$profile"; fi
@@ -252,6 +277,7 @@ vf_source_module() { # vf_source_module <file>
 }
 
 vf_main() {
+	VF_ORIG_ARGS=("$@") # vf_need_root re-execs with these (its own "$@" is empty)
 	local cmd="" sub_args=()
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -318,6 +344,7 @@ vf_main() {
 		vf_need_root
 		ui_init
 		local rb_snap="" rb_arg
+		# shellcheck disable=SC2034  # VF_ROLLBACK_FORCE is read by vf_do_rollback in lib/safety.sh
 		for rb_arg in "${sub_args[@]:-}"; do
 			case "$rb_arg" in
 			--force) VF_ROLLBACK_FORCE=1 ;;

@@ -24,7 +24,11 @@ mod_apparmor_auditd_run() {
 	# AppArmor: ensure enabled + enforcing where profiles exist
 	systemctl enable --now apparmor >/dev/null 2>&1 || true
 	local loaded enforcing
-	loaded="$(aa-status 2>/dev/null | grep -oP 'profiles are loaded\.?\s*' >/dev/null && aa-status 2>/dev/null | awk '/profiles are in enforce mode/{gsub(/[.,]/,"");print $1}')"
+	# '|| true' guards the substitution: a missing/failing aa-status must not
+	# kill the module under the runner's errexit
+	loaded="$({ aa-status 2>/dev/null | grep -q 'profiles are loaded'; } &&
+		aa-status 2>/dev/null | awk '/profiles are in enforce mode/{gsub(/[.,]/,"");print $1}' ||
+		true)"
 	enforcing="${loaded:-0}"
 	if [ "$enforcing" = "0" ]; then
 		ui_warn "AppArmor has no enforcing profiles — leaving as-is (Ubuntu default profiles apply)"

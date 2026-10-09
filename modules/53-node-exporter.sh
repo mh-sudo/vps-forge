@@ -22,8 +22,11 @@ mod_node_exporter_check() {
 	local arch
 	arch="$(vf_arch)"
 	[ -n "${VF_NE_SHA[$arch]:-}" ] || return 1
-	systemctl is-active --quiet node_exporter 2>/dev/null &&
-		[ "$(vf_sha256 /usr/local/bin/node_exporter)" = "${VF_NE_SHA[$arch]}" ]
+	systemctl is-active --quiet node_exporter 2>/dev/null || return 1
+	# the installed BINARY's version must match the pinned release — comparing
+	# the binary's sha256 to the TARBALL's pinned hash can never be true
+	[ -x /usr/local/bin/node_exporter ] &&
+		/usr/local/bin/node_exporter --version 2>&1 | grep -q "version ${VF_NE_VERSION}"
 }
 
 mod_node_exporter_run() {
@@ -45,7 +48,10 @@ mod_node_exporter_run() {
 	fi
 	tar -xzf "$dest" -C "$VF_TMP_DIR"
 	install -m 755 "$VF_TMP_DIR/node_exporter-${VF_NE_VERSION}.linux-${arch}/node_exporter" /usr/local/bin/node_exporter
-	id node_exporter >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter
+	id node_exporter >/dev/null 2>&1 || {
+		useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter
+		vf_note_created_user node_exporter
+	}
 	vf_write_file /etc/systemd/system/node_exporter.service 644 <<EOF
 [Unit]
 Description=Prometheus Node Exporter

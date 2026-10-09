@@ -26,17 +26,18 @@ mod_runtimes_run() {
 	local node
 	node="$(cfg_get runtimes.node none)"
 	case "$node" in none | "") : ;; 20 | 22 | 24 | 26)
-		# NodeSource official setup (GPG-signed repo)
+		# NodeSource official setup (GPG-signed repo). If setup fails, do NOT
+		# fall back to the distro nodejs silently — say so and skip Node.
 		if vf_curl "https://deb.nodesource.com/setup_${node}.x" -o "$VF_TMP_DIR/nodesource-setup.sh"; then
-			bash "$VF_TMP_DIR/nodesource-setup.sh" >"$VF_TMP_DIR/nodesource.log" 2>&1 ||
-				{
-					tail -5 "$VF_TMP_DIR/nodesource.log" >&2 || true
-					ui_warn "NodeSource setup failed — skipping Node"
-				}
-			vf_pkg_install nodejs
-			node -v >&2 || true
+			if bash "$VF_TMP_DIR/nodesource-setup.sh" >"$VF_TMP_DIR/nodesource.log" 2>&1; then
+				vf_pkg_install nodejs
+				node -v >&2 || true
+			else
+				tail -5 "$VF_TMP_DIR/nodesource.log" >&2 || true
+				ui_warn "NodeSource setup failed — Node NOT installed (re-run this module to retry)"
+			fi
 		else
-			ui_warn "could not reach NodeSource — skipping Node"
+			ui_warn "could not reach NodeSource — Node NOT installed"
 		fi
 		;;
 	*) ui_warn "unsupported Node major '$node' — skipping" ;;

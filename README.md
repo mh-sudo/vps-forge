@@ -48,7 +48,7 @@ Most "how to secure a VPS" guides fail beginners in the same few places.
 | Turning on UFW before allowing SSH | Refuses. The active SSH port is allowed first, always |
 | Disabling password login with no working key | Refuses until a key for the target user is verified |
 | Docker ports ignoring UFW, so "denied" ports are open to the internet | Uses the `DOCKER-USER` chain so published container ports are **closed by default** until you allow them |
-| Breaking something and not knowing what changed | Every touched file is backed up to `/var/backups/vps-forge/<timestamp>/`, and `vps-forge rollback` restores it |
+| Breaking something and not knowing what changed | Every touched file is backed up to `/var/backups/vps-forge/<timestamp>.<tag>/`, and `vps-forge rollback` restores it |
 | Not knowing if it worked | Runs a Lynis audit before and after and shows the score difference |
 
 ## Quick start
@@ -194,11 +194,22 @@ sudo ./vps-forge --help
 
 vps-forge rollback                       # restore the most recent backup set
 vps-forge rollback <snapshot> --force    # scripted rollback, skips prompts
-vps-forge docker-allow <port>/<proto> [container]
+vps-forge docker-allow <port>/<proto> [comment]   # expose a published port through DOCKER-USER
+vps-forge docker-deny <port>/<proto>     # close it again
+vps-forge docker-fw-status               # show the DOCKER-USER rules
 vps-forge verify-firewall                # prove Docker ports are private by default
 vps-forge backup-test                    # prove backups restore
+vps-forge panel-remove coolify|cloudpanel|cyberpanel   # uninstall a panel (asks to type the name)
+vps-forge self-clean [--scope=all|panels|docker|hardening] [--yes]   # remove everything vps-forge applied
 vps-forge status                         # snapshots, guards, applied modules
+vps-forge guard-cancel sshd|ufw|totp     # cancel an armed auto-revert guard (from a VERIFIED new session)
 ```
+
+Notes: `self-clean` is destructive and asks you to type `self-clean` to confirm;
+it only deletes users, packages and Docker data that vps-forge itself created
+(pre-existing sites, databases and firewall rules are left alone).
+`panel-remove` only touches the panel's own packages and configs — the web
+stack and site data stay.
 
 ### Non-interactive mode
 
@@ -222,6 +233,33 @@ docker.bind_ip: 127.0.0.1
 backup.target: none
 panel: none
 ```
+
+### Configuration keys
+
+Every key below can be set in a `--config` file; anything you don't set gets a
+safe default (the full list with defaults lives in `lib/common.sh` →
+`cfg_load_defaults`). Selected keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sys.timezone` | *(current)* | tz name, e.g. `Asia/Dhaka`; empty/`auto` keeps current |
+| `sys.hostname` | `keep` | set a new hostname; `keep` leaves it |
+| `admin.username` | `none` | admin user to create (skipped when `none`) |
+| `admin.pubkey` | *(empty)* | SSH public key for the admin user; placeholders are refused |
+| `admin.disable_root_login` | `false` | root login disabled once the admin key is verified |
+| `ssh.port` | `keep` | change the SSH port (dual-listen + verify flow) |
+| `ssh.password_auth` | `keep-until-verified` | `no` only after a key is verified |
+| `ssh.allow_tcp_forwarding` | `false` | CIS default; set `true` if you tunnel |
+| `fw.open_ports` | *(empty)* | extra UFW ports, e.g. `80,443` |
+| `swap.size` | `auto` | MB, or `auto` (RAM-based sizing) |
+| `docker.bind_ip` | `127.0.0.1` | default bind for `-p` publishes (`0.0.0.0` = public) |
+| `proxy.engine` / `proxy.domain` / `proxy.upstream_port` | `none` | Caddy reverse proxy settings |
+| `backup.target` / `backup.paths` / `backup.schedule` | `none` | restic backup settings |
+| `tailscale.auth_key` | *(empty)* | join a tailnet non-interactively |
+| `wg.mode` | `access` | `access` (server only) or `full` (full tunnel + NAT) |
+| `panel` / `panel_cyberpanel.accept_risk` | `none` / `false` | panel choice; CyberPanel needs explicit risk acceptance |
+| `totp.enabled` / `totp.users` / `totp.confirmed` | `false` | SSH TOTP 2FA for the listed users only |
+| `guard.timeout` | `180` | auto-revert window (seconds) for sshd/ufw/TOTP guards |
 
 ## How it works
 
@@ -256,7 +294,7 @@ vps-forge/
 - Ubuntu **22.04** or **24.04** LTS, fresh install recommended
 - Root, or a user with sudo
 - Internet access, and `curl` or `wget` (the Quick start line installs curl for you — stock Ubuntu Server ships without it)
-- 1 GB RAM minimum for the basics (panels need more, and Vps Forge checks before installing)
+- About 1 GB RAM to run (preflight flags anything under 900 MB; panels need 2 GB+, and Vps Forge checks before installing)
 
 ## Threat model
 
@@ -305,9 +343,9 @@ Vps Forge is **beta**. Live-tested end to end on Ubuntu 24.04 (2 vCPU / 2 GB KVM
 ## Development
 
 ```bash
-shellcheck -S warning vps-forge install.sh lib/*.sh modules/*.sh
-shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh
-./scripts/check.sh      # manifest <-> module functions <-> install.sh cross-checks
+shellcheck -S warning vps-forge install.sh lib/*.sh modules/*.sh scripts/*.sh
+shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh scripts/*.sh
+./scripts/check.sh      # manifest <-> modules <-> install.sh <-> checksums.txt
 ```
 
 CI runs the same gates on every push. See [CONTRIBUTING.md](CONTRIBUTING.md) for module conventions and the test protocol.

@@ -19,22 +19,33 @@ docker_fw_write_loader() {
 # Rules source: /etc/vps-forge/docker-user.rules  (allow|tcp|PORT|comment)
 set -u
 RULES=/etc/vps-forge/docker-user.rules
-EXT_IF="$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
-[ -n "$EXT_IF" ] || EXT_IF=eth0
 
-ensure_chain() { # $1 = iptables binary, $2 = family
-	local ipt="$1"
+# interfaces whose forwarded traffic must NOT be dropped: docker's own
+# bridges plus tunnel/VPN interfaces (containers reachable over the tailnet)
+is_internal_if() {
+	case "$1" in
+	lo | docker0 | docker_gwbridge | br-* | veth* | tailscale* | wg* | zt* | virbr*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+ensure_chain() { # $1 = iptables binary (iptables | ip6tables)
+	local ipt="$1" iface
 	$ipt -nL DOCKER-USER >/dev/null 2>&1 || $ipt -N DOCKER-USER
 	# Docker must jump to DOCKER-USER from FORWARD; ensure it exists (may be
 	# absent after backend switches or restored rulesets — handled explicitly).
 	$ipt -C FORWARD -j DOCKER-USER >/dev/null 2>&1 || $ipt -I FORWARD 1 -j DOCKER-USER
-	$ipt -F DOCKER-USER
+
+	# build the whole chain as ONE iptables-restore transaction: a flush+rebuild
+	# via individual commands used to leave a short no-rules window on every reload
+	local body=""
+	body+="*filter"$'\n'
+	body+=":DOCKER-USER - [0:0]"$'\n' # create-or-flush inside the transaction
 	# 1. replies to outbound container traffic + established inbound
-	$ipt -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+	body+="-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"$'\n'
 	# 2. container-originated + inter-container traffic (all docker bridges)
-	local br
-	for br in $(ls /sys/class/net 2>/dev/null | grep -E '^(docker0|br-)'); do
-		$ipt -A DOCKER-USER -i "$br" -j ACCEPT
+	for iface in $(ls /sys/class/net 2>/dev/null); do
+		case "$iface" in docker0 | br-*) body+="-A DOCKER-USER -i $iface -j ACCEPT"$'\n' ;; esac
 	done
 	# 3. explicit per-port allows — matched on the ORIGINAL destination port
 	#    via conntrack: DOCKER-USER sees packets AFTER DNAT, so --dport would
@@ -43,19 +54,45 @@ ensure_chain() { # $1 = iptables binary, $2 = family
 	if [ -r "$RULES" ]; then
 		while IFS='|' read -r act proto port comment; do
 			[ "${act:-}" = "allow" ] || continue
-			case "$port" in ''|*[!0-9]*) continue ;; esac
-			case "$proto" in tcp|udp) ;; *) proto=tcp ;; esac
-			$ipt -A DOCKER-USER -i "$EXT_IF" -p "$proto" -m conntrack --ctorigdstport "$port" -j ACCEPT
+			case "$port" in '' | *[!0-9]*) continue ;; esac
+			case "$proto" in tcp | udp) ;; *) proto=tcp ;; esac
+			body+="-A DOCKER-USER -p $proto -m conntrack --ctorigdstport $port -j ACCEPT"$'\n'
 		done <"$RULES"
 	fi
-	# 4. default-deny inbound from the outside to published ports
-	$ipt -A DOCKER-USER -i "$EXT_IF" -j DROP
-	# do not interfere with traffic not arriving from the outside interface
-	$ipt -A DOCKER-USER -j RETURN
+	# 4. default-deny inbound from EVERY external interface (not just the
+	#    default-route one), keeping tunnels/bridges pass-through
+	for iface in $(ls /sys/class/net 2>/dev/null); do
+		is_internal_if "$iface" || body+="-A DOCKER-USER -i $iface -j DROP"$'\n'
+	done
+	# anything else (new/internal interfaces) passes through to Docker's rules
+	body+="-A DOCKER-USER -j RETURN"$'\n'
+	body+="COMMIT"$'\n'
+
+	if ! printf '%s' "$body" | $ipt-restore --noflush 2>/dev/null; then
+		# legacy fallback (iptables-restore absent?): old flush+rebuild path
+		$ipt -F DOCKER-USER
+		$ipt -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+		for iface in $(ls /sys/class/net 2>/dev/null); do
+			case "$iface" in docker0 | br-*) $ipt -A DOCKER-USER -i "$iface" -j ACCEPT ;; esac
+		done
+		if [ -r "$RULES" ]; then
+			while IFS='|' read -r act proto port comment; do
+				[ "${act:-}" = "allow" ] || continue
+				case "$port" in '' | *[!0-9]*) continue ;; esac
+				case "$proto" in tcp | udp) ;; *) proto=tcp ;; esac
+				$ipt -A DOCKER-USER -p "$proto" -m conntrack --ctorigdstport "$port" -j ACCEPT
+			done <"$RULES"
+		fi
+		for iface in $(ls /sys/class/net 2>/dev/null); do
+			is_internal_if "$iface" || $ipt -A DOCKER-USER -i "$iface" -j DROP
+		done
+		$ipt -A DOCKER-USER -j RETURN
+	fi
+	exit 0
 }
 
-ensure_chain iptables 4
-command -v ip6tables >/dev/null 2>&1 && ensure_chain ip6tables 6
+ensure_chain iptables
+command -v ip6tables >/dev/null 2>&1 && ensure_chain ip6tables
 exit 0
 LOADER
 }
@@ -113,13 +150,17 @@ docker_fw_allow() { # docker_fw_allow <port/proto> [comment]
 	mv "$VF_DF_RULES_FILE.tmp" "$VF_DF_RULES_FILE"
 	docker_fw_reload_live
 	echo "allowed $port/$proto from outside to Docker-published ports (persists reboots/restarts)"
-	iptables -S DOCKER-USER 2>/dev/null | grep -- "--dport $port " || true
+	# rules match on the conntrack ORIGINAL port, not --dport (DNAT already applied)
+	iptables -S DOCKER-USER 2>/dev/null | grep -- "--ctorigdstport $port " || true
 }
 
 docker_fw_deny() { # docker_fw_deny <port/proto>
 	local pp="$1"
 	local port="${pp%%/*}" proto="${pp#*/}"
 	case "$proto" in tcp | udp) ;; *) proto=tcp ;; esac
+	case "$port" in
+	'' | *[!0-9]*) vf_die "invalid port: $pp (expected e.g. 8080/tcp)" ;;
+	esac
 	docker_fw_write_rules_file
 	grep -v "^allow|$proto|$port|" "$VF_DF_RULES_FILE" >"$VF_DF_RULES_FILE.tmp" || true
 	mv "$VF_DF_RULES_FILE.tmp" "$VF_DF_RULES_FILE"
@@ -192,11 +233,11 @@ docker_fw_verify() {
 		echo "FAIL: established rule"
 		exit 1
 	}
-	iptables -S DOCKER-USER | grep -q -- "-i $(vf_ext_if_resolved) -p tcp -m conntrack --ctorigdstport $TP -j ACCEPT" && {
+	iptables -S DOCKER-USER | grep -q -- "-p tcp -m conntrack --ctorigdstport $TP -j ACCEPT" && {
 		echo "FAIL: port $TP already allowed — deny it first (vps-forge docker-deny $TP/tcp)"
 		exit 1
 	}
-	iptables -S DOCKER-USER | grep -q -- "-i $(vf_ext_if_resolved) -j DROP" && echo "  ok: default DROP from $(vf_ext_if_resolved)" || {
+	iptables -S DOCKER-USER | grep -qE "\-i [a-z0-9@]+ -j DROP" && echo "  ok: default DROP on external interfaces" || {
 		echo "FAIL: default DROP missing"
 		exit 1
 	}

@@ -1,31 +1,36 @@
-name: ShellCheck + shfmt
+name: ShellCheck + shfmt + gates
 
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Install shellcheck and shfmt
+      - name: Install shellcheck and shfmt (shfmt pinned by checksum)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
           curl -fsSL -o /usr/local/bin/shfmt \
             https://github.com/mvdan/sh/releases/download/v3.11.0/shfmt_v3.11.0_linux_amd64
+          echo "1904ec6bac715c1d05cd7f6612eec8f67a625c3749cb327e5bfb4127d09035ff  /usr/local/bin/shfmt" | sha256sum -c -
           chmod +x /usr/local/bin/shfmt
           echo "shfmt $(shfmt --version)"
 
       - name: ShellCheck (warnings are failures)
-        run: shellcheck -S warning vps-forge install.sh lib/*.sh modules/*.sh
+        run: shellcheck -S warning vps-forge install.sh lib/*.sh modules/*.sh scripts/*.sh
 
       - name: shfmt (no diff allowed)
         run: |
-          shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh
+          shfmt -d -ln bash vps-forge install.sh lib/*.sh modules/*.sh scripts/*.sh
 
       - name: Manifest <-> module cross-checks
         run: |
@@ -39,3 +44,7 @@ jobs:
             done
           done < modules/manifest.conf
           echo "cross-checks OK"
+
+      # checksums.txt freshness + install.sh FILES <-> tree (single source of truth)
+      - name: Consistency gates (scripts/check.sh)
+        run: bash scripts/check.sh

@@ -3,7 +3,7 @@
 # Sourced by the vps-forge entrypoint; not executable on its own.
 
 # shellcheck disable=SC2034
-VF_VERSION="1.0.0"
+VF_VERSION="0.2.0"
 VF_LIB_DIR="${VF_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 VF_ROOT="$(cd "$VF_LIB_DIR/.." && pwd)"
 VF_STATE_DIR="/var/lib/vps-forge"
@@ -18,7 +18,15 @@ VF_ETC_DIR="/etc/vps-forge"
 # per-process scratch — /run, NOT /tmp: the tmpfs module mounts a fresh
 # tmpfs over /tmp mid-run, which would shadow this directory and fail
 # every later module's log redirection ("mod-X.log: No such file or")
-VF_TMP_DIR="$(mktemp -d /run/vps-forge.XXXXXX)"
+# Created lazily by vf_init_tmpdir (after root is confirmed): source-time
+# creation used to kill non-root `--version`/`--help` with a raw mktemp error
+VF_TMP_DIR=""
+vf_init_tmpdir() {
+	[ -n "$VF_TMP_DIR" ] && return 0
+	VF_TMP_DIR="$(mktemp -d /run/vps-forge.XXXXXX)" || vf_die "cannot create scratch dir under /run"
+	# every run cleans up after itself (the dir used to leak one per run)
+	trap '[ -n "$VF_TMP_DIR" ] && rm -rf "$VF_TMP_DIR"' EXIT
+}
 # shellcheck disable=SC2034
 VF_MODULE_DIR="$VF_ROOT/modules"
 VF_NONINTERACTIVE="${VF_NONINTERACTIVE:-0}"
@@ -28,10 +36,30 @@ VF_VERBOSE="${VF_VERBOSE:-0}"
 # Associative config store: merged defaults <- config file <- interactive answers.
 declare -A CFG
 
+# ---------- secret redaction ----------
+
+# registered values are replaced in every LOG line (never on the terminal —
+# some secrets are deliberately shown once); ui_spin logs command strings,
+# so anything passed on a command line must be registered here
+declare -a VF_SECRETS=()
+vf_secret_register() { # vf_secret_register <value>...
+	local v
+	for v in "$@"; do
+		[ -n "$v" ] && VF_SECRETS+=("$v")
+	done
+}
+vf_redact() { # vf_redact <string> -> stdout with registered secrets masked
+	local s="$1" v
+	for v in ${VF_SECRETS[@]+"${VF_SECRETS[@]}"}; do
+		[ -n "$v" ] && s="${s//"$v"/***REDACTED***}"
+	done
+	printf '%s' "$s"
+}
+
 vf_log() { # vf_log LEVEL message...
 	local lvl="$1"
 	shift
-	printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$lvl" "$*" >>"$VF_LOG_FILE" 2>/dev/null || true
+	printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$lvl" "$(vf_redact "$*")" >>"$VF_LOG_FILE" 2>/dev/null || true
 }
 vf_log_info() { vf_log INFO "$@"; }
 vf_log_warn() { vf_log WARN "$@"; }
@@ -49,10 +77,13 @@ vf_need_root() {
 	if ! vf_running_as_root; then
 		if command -v sudo >/dev/null 2>&1; then
 			vf_log_info "not root; re-execing via sudo"
-			exec sudo -E bash "$0" "$@"
+			# re-exec with the ORIGINAL argv — callers invoke vf_need_root bare,
+			# so the function's own "$@" is empty and every flag was being dropped
+			exec sudo -E bash "$0" ${VF_ORIG_ARGS+"${VF_ORIG_ARGS[@]}"}
 		fi
 		vf_die "must run as root (try: sudo $0)"
 	fi
+	vf_init_tmpdir
 }
 
 # ---------- config store ----------
@@ -100,6 +131,7 @@ cfg_load_defaults() {
 		"backup.schedule=daily"
 		"tailscale.auth_key="
 		"wg.enabled=false"
+		"wg.mode=access"
 		"wg.port=51820"
 		"cloudflared.token="
 		"panel=none"
@@ -211,6 +243,20 @@ vf_ensure_dir() {
 vf_ensure_credentials_dir() {
 	vf_ensure_dir "$VF_CREDS_DIR"
 	chmod 700 "$VF_CREDS_DIR"
+	# provenance marker: self-clean removes this directory (restic.pw lives here)
+	# only when vps-forge created/uses it — a foreign dir with the same name survives
+	touch "$VF_CREDS_DIR/.created-by-vps-forge"
+	chmod 600 "$VF_CREDS_DIR/.created-by-vps-forge"
+}
+
+# register a user account vps-forge created — self-clean deletes ONLY these
+vf_note_created_user() {
+	local u="$1"
+	[ -n "$u" ] || return 0
+	mkdir -p "$VF_STATE_DIR"
+	touch "$VF_STATE_DIR/created-users.txt"
+	grep -qxF "$u" "$VF_STATE_DIR/created-users.txt" 2>/dev/null ||
+		printf '%s\n' "$u" >>"$VF_STATE_DIR/created-users.txt"
 }
 
 vf_save_credential() { # vf_save_credential <filename> <contents...>
@@ -269,12 +315,14 @@ vf_pkg_install() { # vf_pkg_install pkg... — recorded in snapshot for rollback
 	# progress is shown by the per-module animator (vf_module_progress_start);
 	# a second spinner here would fight it for the same output line
 	[ "${#missing[@]}" -gt 0 ] || return 0
-	__vf_pkg_install_raw "${pkgs[@]}"
+	# pass ONLY the missing ones: the snapshot records exactly what this call
+	# installs, so rollback/self-clean never purge packages that were already
+	# on the server before vps-forge ran
+	__vf_pkg_install_raw "${missing[@]}"
 }
 
 __vf_pkg_install_raw() {
 	local pkgs=("$@")
-	# install only the missing ones, but pass all (apt is idempotent; this keeps resolver happy)
 	if ! DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" \
 		install -y -qq "${pkgs[@]}" >>"$VF_TMP_DIR/apt.log" 2>&1; then
 		tail -20 "$VF_TMP_DIR/apt.log" >&2 || true
@@ -285,13 +333,9 @@ __vf_pkg_install_raw() {
 }
 
 vf_pkg_purge() { # vf_pkg_purge pkg... (best-effort)
-	local p
-	for p in "$@"; do
-		dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || continue
-		vf_log_info "apt purging: $p"
-	done
+	# NO autoremove here: rollback may run early in a server's life, and
+	# autoremove sweeps auto-installed dependencies of PRE-EXISTING packages too
 	DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" purge -y -qq "$@" >>"$VF_TMP_DIR/apt.log" 2>&1 || true
-	DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$VF_APT_LOCK_WAIT" autoremove -y -qq >>"$VF_TMP_DIR/apt.log" 2>&1 || true
 }
 
 vf_svc_enable() { systemctl enable --now "$@" >/dev/null 2>&1 || systemctl restart "$1" >/dev/null 2>&1 || true; }

@@ -15,6 +15,7 @@ mod_deploy_user_run() {
 	if ! id deploy >/dev/null 2>&1; then
 		useradd -m -s /bin/bash deploy
 		passwd -l deploy >/dev/null 2>&1 || true
+		vf_note_created_user deploy
 	fi
 	# pre-create the docker group so membership works even if docker runs later
 	groupadd -f docker >/dev/null 2>&1 || true

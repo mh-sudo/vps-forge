@@ -30,6 +30,9 @@ vf_snapshot_create() {             # vf_snapshot_create [tag]
 		VF_SNAP_DIR="$VF_BACKUP_ROOT/${ts}.${tag}.$n"
 	done
 	mkdir -p "$VF_SNAP_DIR/files"
+	# snapshots hold copies of sshd_config, authorized_keys and similar —
+	# keep them root-only
+	chmod 700 "$VF_BACKUP_ROOT" "$VF_SNAP_DIR"
 	{
 		echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		echo "version=$VF_VERSION"
@@ -117,11 +120,18 @@ vf_guard_start() { # vf_guard_start <name> <seconds> <shell-cmd>
 	printf 'guard|%s|%s\n' "$name" "$*" >>"$VF_TMP_DIR/guards-armed.txt"
 }
 
-vf_guard_cancel() {
+vf_guard_cancel() { # -> 0 if cancelled while armed, 1 if the timer already fired
 	local unit="vpsforge-$1"
-	systemctl stop "${unit}.timer" >/dev/null 2>&1 || true
-	systemctl reset-failed "$unit" >/dev/null 2>&1 || true
-	vf_log_info "guard CANCELLED: $unit"
+	if systemctl is-active --quiet "${unit}.timer" 2>/dev/null; then
+		systemctl stop "${unit}.timer" >/dev/null 2>&1 || true
+		systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+		vf_log_info "guard CANCELLED: $unit"
+		return 0
+	fi
+	# the guard is not armed anymore — either it already fired (change REVERTED)
+	# or it was cancelled elsewhere; callers must not report success on rc=1
+	vf_log_warn "guard $unit is NOT armed (already fired or gone) — the change may have been reverted"
+	return 1
 }
 
 vf_guard_list() {
@@ -191,8 +201,21 @@ vf_confirm_new_session() { # vf_confirm_new_session "human description" [port-hi
 	local what="$1" hint="${2:-}" to="${VF_GUARD_TIMEOUT:-180}"
 	if [ "$VF_NONINTERACTIVE" = "1" ]; then
 		if [ "$hint" = "failopen" ]; then
-			ui_para "non-interactive fail-open change ('$what'): internal checks passed; confirming"
-			return 0
+			# fail-open auto-confirm is ONLY honest after proving the ssh port is
+			# actually allowed — otherwise the firewall would stay up with no
+			# auto-revert and no way in
+			local ports p
+			ports="$(vf_current_ssh_ports)"
+			[ -n "$ports" ] || ports="$(vf_effective_ssh_port)"
+			for p in $ports; do
+				[ -n "$p" ] || continue
+				if ufw status 2>/dev/null | grep -q -- "$p"; then
+					ui_para "non-interactive fail-open change ('$what'): ufw allows ssh port $p — confirming"
+					return 0
+				fi
+			done
+			ui_error "fail-open check FAILED: no ssh port allowed in ufw — the auto-revert guard stays armed"
+			return 1
 		fi
 		ui_warn "Non-interactive run: '$what' is protected by an auto-revert timer (${to}s)."
 		ui_para "Verify from a NEW ssh session, then run:  vps-forge guard-cancel <name>"
@@ -217,18 +240,25 @@ vf_confirm_new_session() { # vf_confirm_new_session "human description" [port-hi
 
 vf_ufw_active() { ufw status 2>/dev/null | grep -q "Status: active"; }
 
-vf_ufw_allow_port() { # vf_ufw_allow_port <port/proto> [limit]
+vf_ufw_allow_port() { # vf_ufw_allow_port <port/proto> [allow|limit] — checked: fails if the rule is absent
 	local pp="$1" mode="${2:-allow}"
-	if [ "$mode" = "limit" ]; then
-		ufw limit "$pp" >/dev/null 2>&1 || true
-	else ufw allow "$pp" >/dev/null 2>&1 || true; fi
+	local sub="$mode"
+	case "$sub" in allow | limit) ;; *) sub=allow ;; esac
+	if ! ufw "$sub" "$pp" >>"$VF_TMP_DIR/ufw.log" 2>&1; then
+		vf_log_error "ufw $sub $pp failed (see $VF_TMP_DIR copy in log)"
+		return 1
+	fi
+	# prove the rule took effect before continuing
+	ufw status 2>/dev/null | grep -q -- "$pp"
 }
 
 vf_ufw_safe_enable() { # ensures ssh ports allowed, then enables with guard
 	local ports p
 	ports="$(vf_current_ssh_ports) $(cfg_get ssh.port keep | sed 's/keep//')"
 	for p in $ports; do
-		[[ "$p" =~ ^[0-9]+$ ]] && vf_ufw_allow_port "$p/tcp" limit
+		if [[ "$p" =~ ^[0-9]+$ ]]; then
+			vf_ufw_allow_port "$p/tcp" limit || return 1
+		fi
 	done
 	ufw default deny incoming >/dev/null 2>&1 || true
 	ufw default allow outgoing >/dev/null 2>&1 || true
@@ -253,17 +283,25 @@ vf_provider_hint() {
 	local vendor product out
 	vendor="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo unknown)"
 	product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo unknown)"
+	# exact vendor matches — a glob like *DO* used to fire for ANY string
+	# containing "DO", and every on-prem Hyper-V guest announced Azure
 	case "$vendor $product" in
 	*Hetzner*) out="Hetzner Cloud Console: https://console.hetzner.cloud → your server → Console (and Rescue mode)." ;;
-	*DigitalOcean* | *DO*) out="DigitalOcean: https://cloud.digitalocean.com → Droplet → Access → Recovery/Droplet console." ;;
-	*Amazon*EC2* | *Amazon*) out="AWS EC2: connect via Session Manager or the browser console (ec2instanceconnect/serial console)." ;;
+	*DigitalOcean*) out="DigitalOcean: https://cloud.digitalocean.com → Droplet → Access → Recovery/Droplet console." ;;
+	*Amazon* | *EC2*) out="AWS EC2: connect via Session Manager or the browser console (ec2instanceconnect/serial console)." ;;
 	*Google* | *GCE*) out="GCP: Serial console via https://console.cloud.google.com → Compute Engine → VM → Serial console." ;;
-	*Microsoft* | *Azure*) out="Azure: Serial Console in the VM blade of the Azure portal." ;;
+	*Oracle*) out="Oracle Cloud: Cloud Shell / serial console from the instance page." ;;
 	*Vultr*) out="Vultr: https://my.vultr.com → server → View Console (and Rescue ISO)." ;;
 	*OVH* | *ovh*) out="OVH: KVM console from the OVH manager (Bare Metal/VM → ...)." ;;
-	*Linode*) out="Linode: Lish console from the Cloud Manager." ;;
-	*Oracle*) out="Oracle Cloud: Cloud Shell / serial console from the instance page." ;;
-	*) out="Unknown provider (DMI: $vendor / $product). Find the VNC/console or rescue option in your provider's control panel BEFORE continuing." ;;
+	*Linode* | *Akamai*) out="Linode: Lish console from the Cloud Manager." ;;
+	*)
+		# KVM/QEMU also reports "QEMU"; VMware "VMware"; only Hyper-V says Microsoft
+		if [ "$(systemd-detect-virt 2>/dev/null)" = "microsoft" ] && command -v systemd-detect-virt >/dev/null 2>&1; then
+			out="Hyper-V guest: use VMConnect from the hypervisor host. If this is an AZURE VM, use Serial Console in the Azure portal (https://portal.azure.com)."
+		else
+			out="Unknown provider (DMI: $vendor / $product). Find the VNC/console or rescue option in your provider's control panel BEFORE continuing."
+		fi
+		;;
 	esac
 	printf '%s' "$out"
 }

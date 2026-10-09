@@ -5,10 +5,27 @@
 VF_UI="${VF_UI:-auto}"
 VF_ACCENT=45 # one accent color (ANSI 256: cyan)
 VF_UI_WIDTH="${VF_UI_WIDTH:-0}"
+# color + glyph policy (refined in ui_init): NO_COLOR / dumb terminals get
+# plain text, non-UTF-8 locales get ASCII markers instead of ✓/✗/•
+VF_COLOR="${VF_COLOR:-1}"
+VF_GLYPH_OK="✓"
+VF_GLYPH_FAIL="✗"
+VF_GLYPH_SKIP="•"
 
 ui_init() {
 	local tty=1
 	[ -t 0 ] && [ -t 2 ] || tty=0
+	if [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = "dumb" ]; then
+		VF_COLOR=0
+	fi
+	case "${LC_ALL:-${LANG:-}}" in
+	*UTF-8* | *utf8*) : ;;
+	*)
+		VF_GLYPH_OK="ok:"
+		VF_GLYPH_FAIL="FAIL:"
+		VF_GLYPH_SKIP="*"
+		;;
+	esac
 	if [ "$VF_UI" = "auto" ]; then
 		if [ "$tty" = "1" ] && command -v gum >/dev/null 2>&1 && [ "${TERM:-}" != "dumb" ] && [ -z "${NO_COLOR:-}" ]; then
 			VF_UI=gum
@@ -56,9 +73,15 @@ ui_error() {
 	ui_para "ERROR: $*"
 	vf_log_error "$*"
 }
-ui_ok() { printf '\033[32m✓\033[0m %s\n' "$*" >&2; }
-ui_fail() { printf '\033[31m✗\033[0m %s\n' "$*" >&2; }
-ui_skip() { printf '\033[33m•\033[0m %s (skipped)\n' "$*" >&2; }
+ui_ok() {
+	if [ "$VF_COLOR" = 1 ]; then printf '\033[32m%s\033[0m %s\n' "$VF_GLYPH_OK" "$*" >&2; else printf '%s %s\n' "$VF_GLYPH_OK" "$*" >&2; fi
+}
+ui_fail() {
+	if [ "$VF_COLOR" = 1 ]; then printf '\033[31m%s\033[0m %s\n' "$VF_GLYPH_FAIL" "$*" >&2; else printf '%s %s\n' "$VF_GLYPH_FAIL" "$*" >&2; fi
+}
+ui_skip() {
+	if [ "$VF_COLOR" = 1 ]; then printf '\033[33m%s\033[0m %s (skipped)\n' "$VF_GLYPH_SKIP" "$*" >&2; else printf '%s %s (skipped)\n' "$VF_GLYPH_SKIP" "$*" >&2; fi
+}
 ui_info() { printf '  %s\n' "$*" >&2; }
 
 ui_risk_ansi() { # risk level -> ANSI color (low green, medium yellow, high red, critical magenta)
@@ -145,6 +168,11 @@ ui_choose() { # ui_choose "prompt" opt1 opt2... -> stdout: chosen value
 			idx=$((idx + 1))
 		done
 		read -r -p "$q [#] " pick </dev/tty >&2
+		# empty or invalid input picks the FIRST option (the default) — bash
+		# negative-array indexing used to silently select the LAST one
+		if [[ ! "$pick" =~ ^[0-9]+$ ]] || [ "$pick" -lt 1 ] || [ "$pick" -gt "${#opts[@]}" ]; then
+			pick=1
+		fi
 		printf '%s\n' "${opts[pick - 1]}"
 		;;
 	esac
@@ -191,7 +219,9 @@ ui_multi() { # ui_multi "prompt" "preselected,csv" opt1 opt2... -> stdout: csv o
 		read -r -p "$q [comma numbers] " pick </dev/tty >&2
 		IFS=',' read -ra sel <<<"$pick"
 		local res="" n
-		for n in "${sel[@]}"; do [[ "$n" =~ ^[0-9]+$ ]] && res+="${opts[n - 1]},"; done
+		for n in "${sel[@]}"; do
+			[[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#opts[@]}" ] && res+="${opts[n - 1]},"
+		done
 		printf '%s\n' "${res%,}"
 		;;
 	esac
@@ -258,12 +288,16 @@ ui_spin() { # ui_spin "title" -- cmd args... ; output captured to a per-call log
 	local title="$1"
 	shift
 	if [ "${1:-}" = "--" ]; then shift; fi
-	local cmd="$*"
+	# shell-quote EVERY arg, then log a REDACTED form: secrets must not reach
+	# /var/log/vps-forge.log, and a value containing quotes must not break
+	# the bash -c invocation
+	local cmd=""
+	printf -v cmd '%q ' "$@"
 	# unique log per call — a shared spin.log gets polluted by later spins,
 	# destroying the failure evidence of earlier ones
 	local log
 	log="$(mktemp "$VF_TMP_DIR/spin.XXXXXX.log")"
-	vf_log_info "run: $cmd"
+	vf_log_info "run: $(vf_redact "$cmd")"
 	# VF_IN_SPIN tells nested helpers (vf_pkg_install) not to spin again
 	if [ "$VF_UI" = "gum" ] && [ "$VF_NONINTERACTIVE" != "1" ]; then
 		VF_IN_SPIN=1 ui_gum spin --spinner line --title " $title" -- bash -c "$cmd >'$log' 2>&1"
@@ -305,8 +339,18 @@ vf_ask() { # vf_ask <cfgkey> "question" "default" [choices...] -> stdout
 vf_ask_bool() { # vf_ask_bool <cfgkey> "question" default(y|n) -> exit code
 	local key="$1" q="$2" def="$3" v
 	v="$(cfg_get "$key" "")"
-	if [ -z "$v" ]; then v="$def"; fi
-	if [ "$VF_NONINTERACTIVE" = "1" ]; then case "$v" in y | yes | true | 1) return 0 ;; *) return 1 ;; esac fi
+	[ -n "$v" ] || v="$def"
+	# normalize config/state spellings ("false", "true", "1", ...) BEFORE use:
+	# ui_confirm treats only a literal "n" as No, so an unnormalized "false"
+	# used to show "default: no" while Enter answered YES
+	case "$v" in
+	y | Y | yes | Yes | YES | true | True | TRUE | 1 | on | On | ON) v="y" ;;
+	*) v="n" ;;
+	esac
+	if [ "$VF_NONINTERACTIVE" = "1" ]; then
+		[ "$v" = "y" ]
+		return
+	fi
 	ui_confirm "$q (default: $([ "$v" = "y" ] && echo yes || echo no))" "$v"
 	local rc=$?
 	cfg_set "$key" "$([ $rc -eq 0 ] && echo y || echo n)"

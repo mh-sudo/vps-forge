@@ -93,8 +93,9 @@ mod_panel_cyberpanel_run() {
 Mandatory mitigations applied/required:
   - keep CyberPanel on the LATEST version (unattended-upgrades does NOT cover it —
     check for updates weekly)
-  - restrict port 8090 (we keep UFW closed to it by default; open only to your IP:
-      ufw allow from YOUR_IP to any port 8090)
+  - port 8090 is opened RATE-LIMITED by this module — restrict it to your IP:
+      ufw insert 1 allow from YOUR_IP to any port 8090 proto tcp
+      ufw delete limit 8090/tcp
   - FTP/mail/DNS/7080 ports stay closed unless you use them
   - enable 2FA in the panel; strong admin password (we generate one)"
 
@@ -119,10 +120,20 @@ Mandatory mitigations applied/required:
 	pass="$(grep -aoE 'password[^A-Za-z0-9]*[A-Za-z0-9]{8,}' "$VF_TMP_DIR/spin.last.log" 2>/dev/null | tail -1 | grep -oE '[A-Za-z0-9]{8,}$' || true)"
 	if [ -z "$pass" ]; then
 		pass="$(vf_random_password 24)"
+		vf_secret_register "$pass"
 		# reset via the documented CLI when available
+		local reset_ok=0
 		if [ -f /usr/local/CyberCP/CLManager/adminPass.py ]; then
-			python3 /usr/local/CyberCP/CLManager/adminPass.py --password "$pass" >/dev/null 2>&1 || true
+			if python3 /usr/local/CyberCP/CLManager/adminPass.py --password "$pass" >/dev/null 2>&1; then
+				reset_ok=1
+			fi
 		fi
+		if [ "$reset_ok" != "1" ]; then
+			ui_warn "could not reset the admin password via CLI — the password shown below may
+NOT be the panel's current one. Reset it inside the panel on first login."
+		fi
+	else
+		vf_secret_register "$pass"
 	fi
 	vf_save_credential "cyberpanel-admin.txt" "CyberPanel admin URL https://$(hostname -I | awk '{print $1}'):8090 user=admin password=$pass
 (RESET IT IN THE PANEL if the CLI reset above failed: no harm either way.)"
@@ -158,12 +169,23 @@ updates:  panel -> Settings -> Version Manager (or: sh <(curl -s https://cyberpa
 }
 
 panel_remove_cyberpanel() {
+	# only when THIS vps-forge installed it (or CyberCP exists): the purge below
+	# must never run on a server where CyberPanel came from elsewhere
+	if ! mod_panel_cyberpanel_check &&
+		[ ! -f "$VF_STATE_DIR/applied/panel_cyberpanel.done" ] &&
+		[ ! -d /usr/local/CyberCP ]; then
+		ui_info "CyberPanel not installed — nothing to remove"
+		return 0
+	fi
 	ui_header "Removing CyberPanel (best-effort — a rebuild is the clean path)"
-	systemctl stop lsws mysqld postfix pure-ftpd 2>/dev/null || true
+	ui_warn "Databases, mail and FTP stacks are NOT purged — their data may pre-date
+vps-forge and deleting it is unrecoverable. Reinstall the OS for a truly clean
+state (that is also CyberPanel's own official advice)."
+	systemctl stop lsws 2>/dev/null || true
 	systemctl disable --now lsws >/dev/null 2>&1 || true
-	apt-get purge -y -qq 'openlitespeed*' 'lsphp*' 'mysql-server*' 'mariadb-server*' \
-		'postfix' 'pure-ftpd*' 'powerdns*' 'pdns*' 'memcached' 'redis-server' >/dev/null 2>&1 || true
-	apt-get autoremove -y -qq >/dev/null 2>&1 || true
+	# CyberPanel-only packages: OpenLiteSpeed + its PHP builds. Generic stacks
+	# (mysql/mariadb, postfix, pure-ftpd, powerdns, redis, memcached) stay.
+	apt-get purge -y -qq 'openlitespeed*' 'lsphp*' >/dev/null 2>&1 || true
 	rm -rf /usr/local/CyberCP /usr/local/lsws /usr/local/CyberCP/.clp /home/cyberpanel \
 		/etc/cyberpanel /var/log/cyberpanel 2>/dev/null || true
 	rm -f /etc/apt/sources.list.d/litespeed*.list /etc/apt/sources.list.d/*cyberpanel* 2>/dev/null || true
@@ -171,6 +193,6 @@ panel_remove_cyberpanel() {
 		ufw delete allow "$p/tcp" >/dev/null 2>&1 || true
 		ufw delete limit "$p/tcp" >/dev/null 2>&1 || true
 	done
-	ui_warn "CyberPanel best-effort removed. DBs/mail/configs may leave traces — for a truly
-clean server, reinstall the OS (that is also CyberPanel's own official advice)."
+	ui_warn "CyberPanel best-effort removed. MySQL/MariaDB, mail (postfix), FTP (pure-ftpd),
+DNS (powerdns) and their data remain installed — remove them manually if unwanted."
 }

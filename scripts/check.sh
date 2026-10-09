@@ -9,6 +9,7 @@ cd "$DIR"
 fail=0
 
 echo "== manifest <-> module functions =="
+# shellcheck disable=SC2034  # title/desc round-trip the manifest format
 while IFS='|' read -r id file title profiles risk desc; do
 	case "$id" in ''|\#*) continue ;; esac
 	f="modules/$file"

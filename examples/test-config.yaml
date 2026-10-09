@@ -1,10 +1,12 @@
 # vps-forge example non-interactive config (flat "key: value" subset of YAML).
 # usage: sudo ./vps-forge --yes --profile=recommended --config=examples/test-config.yaml
+# REPLACE <YOUR_PUBKEY> with your own public key — the module REFUSES placeholder
+# values, and shipping a real key here would give its owner SSH access to your server.
 sys.timezone: UTC
 sys.locale: en_US.UTF-8
 sys.hostname: keep
 admin.username: forge
-admin.pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPJ2ESNbVBI6b6sAkEWlxjEIFN/R0EGi+YXgaNA/fmze vf-test-admin@zcode
+admin.pubkey: <YOUR_PUBKEY>
 admin.disable_root_login: false
 ssh.port: keep
 ssh.allow_tcp_forwarding: false

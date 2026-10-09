@@ -120,7 +120,17 @@ upgrade:   apt update && apt install cloudpanel   (CloudPanel ships package upda
 }
 
 panel_remove_cloudpanel() {
+	# only when THIS vps-forge installed it (or the package is present): the
+	# purge below must never run on a server where CloudPanel came from elsewhere
+	if ! mod_panel_cloudpanel_check &&
+		[ ! -f "$VF_STATE_DIR/applied/panel_cloudpanel.done" ]; then
+		ui_info "CloudPanel not installed — nothing to remove"
+		return 0
+	fi
 	ui_header "Removing CloudPanel (best-effort — a rebuild is the clean path)"
+	ui_warn "Sites, databases and the nginx/PHP/MySQL stack are NOT touched — they may
+pre-date vps-forge and deleting them is unrecoverable. Reinstall the OS for a
+truly clean state before re-running a panel install."
 	systemctl stop cloudpanel-utils nginx proftpd mysql mariadb 2>/dev/null || true
 	apt-get purge -y -qq cloudpanel cloudpanel-core cloudpanel-libs >/dev/null 2>&1 || true
 	# the cloudpanel package's prerm calls sudo/su on a nologin user and FAILS
@@ -133,12 +143,11 @@ panel_remove_cloudpanel() {
 		done
 		dpkg --purge cloudpanel >/dev/null 2>&1 || dpkg --purge --force-all cloudpanel >/dev/null 2>&1 || true
 	fi
-	apt-get purge -y -qq 'nginx*' 'php*' 'proftpd*' 'mysql-server*' 'mariadb-server*' 'varnish' 'redis-server' >/dev/null 2>&1 || true
-	apt-get autoremove -y -qq >/dev/null 2>&1 || true
 	dpkg --configure -a >/dev/null 2>&1 || true
-	rm -rf /etc/cloudpanel /var/lib/cloudpanel /var/www /home/clp /root/.cloudpanel /etc/apt/sources.list.d/cloudpanel.list /etc/apt/preferences.d/00packages.cloudpanel.io.pref 2>/dev/null || true
+	# CloudPanel's OWN files only — never /var/www, never /home/clp (site data)
+	rm -rf /etc/cloudpanel /var/lib/cloudpanel /root/.cloudpanel /etc/apt/sources.list.d/cloudpanel.list /etc/apt/preferences.d/00packages.cloudpanel.io.pref 2>/dev/null || true
 	rm -f /etc/update-motd.d/10-cloudpanel 2>/dev/null || true
 	for p in 80 443 8443; do ufw delete allow "$p/tcp" >/dev/null 2>&1 || true; done
-	ui_warn "CloudPanel is best-effort removed. DB data, users and leftover configs may remain —
-reinstall the OS for a truly clean state before re-running a panel install."
+	ui_warn "CloudPanel removed. The web stack (nginx/PHP/MySQL/ProFTPD) and all sites in
+/home/clp remain installed and running — remove them manually if unwanted."
 }

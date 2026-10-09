@@ -27,8 +27,21 @@ mod_reverse_proxy_ask() {
 		if [[ "$(cfg_get proxy.engine none)" == caddy* ]]; then
 			cfg_set proxy.domain "$(vf_ask proxy.domain "Domain to serve (empty = no domain yet)" "")"
 			cfg_set proxy.acme_email "$(vf_ask proxy.acme_email "ACME account email (for Let's Encrypt)" "")"
+			cfg_set proxy.upstream_port "$(vf_ask proxy.upstream_port "Upstream app port to proxy to" "8080")"
 		fi
 	fi
+}
+
+__vf_valid_domain() { # empty ok; else hostname chars only
+	local d="$1"
+	[ -z "$d" ] && return 0
+	case "$d" in
+	*[!A-Za-z0-9.-]*) return 1 ;;
+	esac
+	case "$d" in
+	.* | *.*.*) return 0 ;;
+	*) return 0 ;;
+	esac
 }
 
 mod_reverse_proxy_check() {
@@ -58,17 +71,32 @@ mod_reverse_proxy_run() {
 
 	if [ "$e" = "caddy" ]; then
 		vf_ensure_dir /etc/apt/keyrings
-		vf_curl -o /etc/apt/keyrings/caddy.asc https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-		vf_curl -o /etc/apt/keyrings/caddy-stable-archive-keyring.gpg \
-			https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+		# the repo key is ASCII-armored: download ONCE and dearmor. The old
+		# code wrote the armored key to a *.gpg name (twice) and apt rejected
+		# the whole repo
+		if ! vf_curl -o /etc/apt/keyrings/caddy.asc https://dl.cloudsmith.io/public/caddy/stable/gpg.key; then
+			ui_error "could not fetch Caddy's signing key — are you online?"
+			return 1
+		fi
+		if ! gpg --batch --yes --dearmor -o /etc/apt/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/keyrings/caddy.asc; then
+			ui_error "could not dearmor Caddy's signing key"
+			return 1
+		fi
+		chmod a+r /etc/apt/keyrings/caddy-stable-archive-keyring.gpg
 		vf_write_file /etc/apt/sources.list.d/caddy-stable.list 644 <<'EOF'
 deb [signed-by=/etc/apt/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/debian/ubuntu any-version main
 EOF
 		vf_apt_update
 		vf_pkg_install caddy
-		local domain email
+		local domain email upstream
 		domain="$(cfg_get proxy.domain "")"
 		email="$(cfg_get proxy.acme_email "")"
+		upstream="$(cfg_get proxy.upstream_port 8080)"
+		case "$upstream" in '' | *[!0-9]*) upstream=8080 ;; esac
+		if ! __vf_valid_domain "$domain"; then
+			ui_error "proxy.domain '$domain' is not a valid hostname (letters/digits/dots/hyphens only)"
+			return 1
+		fi
 		if [ -n "$domain" ]; then
 			[ -n "$email" ] && email="email $email" || email=""
 			vf_write_file /etc/caddy/Caddyfile 644 <<EOF
@@ -77,7 +105,7 @@ EOF
 }
 
 $domain {
-	reverse_proxy 127.0.0.1:8080
+	reverse_proxy 127.0.0.1:${upstream}
 }
 EOF
 		else
@@ -87,8 +115,16 @@ EOF
 }
 EOF
 		fi
-		systemctl enable --now caddy >/dev/null 2>&1 || systemctl reload caddy >/dev/null 2>&1 || systemctl restart caddy >/dev/null 2>&1
-		systemctl is-active --quiet caddy && ui_ok "caddy active (see /etc/caddy/Caddyfile)"
+		if ! { systemctl enable --now caddy >/dev/null 2>&1 || systemctl restart caddy >/dev/null 2>&1; }; then
+			ui_error "could not start caddy — check: journalctl -u caddy -n 30"
+			return 1
+		fi
+		if systemctl is-active --quiet caddy; then
+			ui_ok "caddy active (config: /etc/caddy/Caddyfile)"
+		else
+			ui_error "caddy is not active after start — check: journalctl -u caddy -n 30"
+			return 1
+		fi
 	else
 		vf_pkg_install nginx
 		rm -f /etc/nginx/sites-enabled/default

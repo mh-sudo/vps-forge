@@ -17,8 +17,15 @@ Include:
 - a minimal reproduction (a disposable VM, please — never a production box),
 - your assessment of impact.
 
-You'll get a response within a few days. Fixes land in a patch release, and
-you'll be credited (or stay anonymous, your choice) in the release notes.
+You'll get an acknowledgement within 72 hours and a status update at least
+weekly until it's resolved. Fixes land in a patch release, and you'll be
+credited (or stay anonymous, your choice) in the release notes.
+
+Note on integrity: release downloads are pinned to a git tag and verified
+against the repo's `checksums.txt` from the same origin. Publishing signed
+checksums is planned; until then treat the GitHub-hosted tag as the root of
+trust and re-verify the tag's commit SHA out-of-band if your threat model
+includes hoster compromise.
 
 ## Scope
 

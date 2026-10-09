@@ -77,7 +77,7 @@ mod_docker_run() {
 	fi
 	chmod a+r "$key"
 	local fp
-	fp="$(gpg --show-keys --with-fingerprint "$key" 2>/dev/null | tr -d ' \n' | grep -oE '[A-F0-9]{40}')"
+	fp="$(gpg --show-keys --with-fingerprint "$key" 2>/dev/null | tr -d ' \n' | grep -oE '[A-F0-9]{40}' || true)"
 	if [ "$fp" != "$VF_DOCKER_GPG_FINGERPRINT" ]; then
 		ui_error "Docker GPG key fingerprint mismatch (got: ${fp:-none}) — refusing the repo"
 		return 1

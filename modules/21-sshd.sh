@@ -153,7 +153,20 @@ Port $newport"
 	if [ -n "$portlines" ]; then
 		# confirm reachable on the new port from a new session, then drop the old port
 		if vf_confirm_new_session "SSH login on the NEW port $newport" "ssh -p $newport $(id -un)@$(hostname -I | awk '{print $1}')"; then
-			vf_guard_cancel sshd
+			if ! vf_guard_cancel sshd; then
+				ui_error "the auto-revert guard already fired — the sshd change was reverted; re-run this module"
+				return 1
+			fi
+			# late-cancel race guard: only claim success if sshd really serves the new port
+			local live_ports
+			live_ports="$(vf_current_ssh_ports)"
+			case " $live_ports " in
+			*" $newport "*) ;;
+			*)
+				ui_error "sshd is not listening on $newport (live ports: ${live_ports:-none}) — not recording success"
+				return 1
+				;;
+			esac
 			printf '%s\n' "$newport" >"$VF_SSHD_PORT_STATE"
 			ui_para "removing old port $oldport from sshd (final config keeps $newport only)"
 			printf 'Port %s\n' "$newport" | {
@@ -161,7 +174,18 @@ Port $newport"
 				sshd_dropin_content "$pl"
 			} | vf_sshd_apply_dropin || return 1
 			vf_confirm_new_session "SSH still reachable on port $newport after final restart" || true
-			vf_guard_cancel sshd
+			if ! vf_guard_cancel sshd; then
+				ui_error "the second auto-revert guard fired — final sshd config was reverted; re-run this module"
+				return 1
+			fi
+			live_ports="$(vf_current_ssh_ports)"
+			case " $live_ports " in
+			*" $newport "*) ;;
+			*)
+				ui_error "sshd is not listening on $newport after the final restart (live: ${live_ports:-none})"
+				return 1
+				;;
+			esac
 			if vf_ufw_active && [ "$oldport" != "$newport" ]; then
 				ufw delete limit "$oldport/tcp" >/dev/null 2>&1 || true
 			fi
@@ -171,7 +195,12 @@ Port $newport"
 		fi
 	else
 		if vf_confirm_new_session "SSH login still works (new key/password rules)"; then
-			vf_guard_cancel sshd
+			if vf_guard_cancel sshd; then
+				vf_sshd_validate || return 1
+			else
+				ui_error "the auto-revert guard already fired — hardening was reverted; re-run this module"
+				return 1
+			fi
 		elif [ "$VF_NONINTERACTIVE" = "1" ]; then
 			# safe by design: applied + guard armed; reverts unless 'vps-forge guard-cancel sshd'
 			ui_para "hardening APPLIED but the auto-revert guard stays armed (${VF_GUARD_TIMEOUT:-180}s)."

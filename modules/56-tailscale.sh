@@ -11,17 +11,21 @@ PLAN
 }
 
 mod_tailscale_check() {
-	systemctl is-active --quiet tailscaled 2>/dev/null && command -v tailscale >/dev/null 2>&1
+	systemctl is-active --quiet tailscaled 2>/dev/null && command -v tailscale >/dev/null 2>&1 &&
+		# "installed" is not "joined": require the node to actually be logged in,
+		# otherwise a re-run would skip an unauthenticated install
+		tailscale status --json 2>/dev/null | grep -q '"BackendState": *"Running"'
 }
 
 mod_tailscale_run() {
 	local key
 	key="$(cfg_get tailscale.auth_key "")"
-	curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/tailscale-archive-keyring.gpg --yes \
-		2>/dev/null || {
-		mkdir -p /etc/apt/keyrings
-		curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/tailscale-archive-keyring.gpg --yes
-	}
+	vf_secret_register "$key"
+	mkdir -p /etc/apt/keyrings
+	if ! curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/tailscale-archive-keyring.gpg --yes 2>/dev/null; then
+		ui_error "could not fetch Tailscale's signing key — are you online?"
+		return 1
+	fi
 	chmod a+r /etc/apt/keyrings/tailscale-archive-keyring.gpg
 	local codename
 	codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
@@ -35,8 +39,19 @@ EOF
 		ufw allow in on tailscale0 >/dev/null 2>&1 || true
 	fi
 	if [ -n "$key" ]; then
-		tailscale up --authkey="$key" --accept-dns=false >"$VF_TMP_DIR/ts-up.log" 2>&1 &&
-			ui_ok "tailscale joined" || { ui_warn "tailscale up failed with key — run 'tailscale up' manually"; }
+		# the auth key must not sit on a command line (visible in ps): hand it to
+		# tailscale through the environment via a 600-mode file instead
+		local envf="$VF_TMP_DIR/ts-auth.env"
+		umask 077
+		printf 'TS_AUTHKEY=%q\n' "$key" >"$envf"
+		umask 022
+		if bash -c 'set -a; . "$1"; set +a; exec tailscale up --accept-dns=false' _ "$envf" >"$VF_TMP_DIR/ts-up.log" 2>&1 &&
+			ui_ok "tailscale joined"; then
+			:
+		else
+			ui_warn "tailscale up failed with key — run 'tailscale up' manually (see $VF_TMP_DIR/ts-up.log in this run)"
+		fi
+		shred -u "$envf" 2>/dev/null || rm -f "$envf"
 	elif [ "$VF_NONINTERACTIVE" != "1" ]; then
 		ui_box "TAILSCALE LOGIN" \
 			"Run in another terminal:  tailscale up

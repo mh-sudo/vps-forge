@@ -14,7 +14,9 @@ mod_rkhunter_check() { [ -d /var/lib/rkhunter/db ]; }
 mod_rkhunter_run() {
 	vf_pkg_install rkhunter
 	rkhunter --update >/dev/null 2>&1 || ui_warn "rkhunter DB update failed (offline?) — continuing"
-	rkhunter --propupd >/dev/null 2>&1 || true
+	rkhunter --propupd >/dev/null 2>&1 ||
+		ui_warn "rkhunter --propupd failed — no file-properties baseline; the daily scan may
+false-positive. Re-run after install:  rkhunter --propupd"
 	if [ -f /etc/default/rkhunter ]; then
 		vf_backup_file /etc/default/rkhunter
 		sed -i 's/^CRON_DAILY_RUN=.*/CRON_DAILY_RUN="yes"/' /etc/default/rkhunter || true

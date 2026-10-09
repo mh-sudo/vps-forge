@@ -10,7 +10,9 @@ mod_panel_coolify_plan() {
 Pre-checks: 2 CPU, 2 GB RAM, disk (warn <30 GB), no snap docker, Docker + docker-fw modules first
 Install via official script (env: ROOT_USERNAME/ROOT_USER_EMAIL/ROOT_USER_PASSWORD pre-created admin)
 Re-apply hardened daemon.json keys after the installer touches it
-Expose ONLY: 80, 443, 8000 (UI) + 6001 (realtime) via UFW and DOCKER-USER
+Expose ONLY: 80, 443, 8000 (UI) + 6001/6002 (realtime) via UFW and DOCKER-USER
+NOTE: the UI on :8000 is plain HTTP — reach it over an SSH tunnel or a tailnet,
+or put a TLS proxy in front before exposing it to the internet.
 Credentials shown once + saved in $VF_CREDS_DIR. Data lives in /data/coolify.
 PLAN
 }
@@ -75,15 +77,29 @@ mod_panel_coolify_run() {
 		return 1
 	}
 	pass="$(vf_random_password 24)"
+	# the password must never sit on a command line (ps) nor in the log
+	vf_secret_register "$pass"
 
 	ui_warn "The Coolify installer modifies /etc/docker/daemon.json (address pools). vps-forge will re-merge its hardening keys afterwards and restart Docker once."
 
+	# hand the admin credentials to the installer via a 600-mode env file —
+	# inline 'ROOT_USER_PASSWORD=...' strings used to land verbatim in the log
+	local envf="$VF_TMP_DIR/coolify-install.env"
+	umask 077
+	{
+		printf 'ROOT_USERNAME=%q\n' "$user"
+		printf 'ROOT_USER_EMAIL=%q\n' "$email"
+		printf 'ROOT_USER_PASSWORD=%q\n' "$pass"
+		printf 'DOCKER_POOL_FORCE_OVERRIDE=false\n'
+	} >"$envf"
+	umask 022
 	if ! ui_spin "Running Coolify installer (pulls images — takes minutes)" -- \
-		"env ROOT_USERNAME='$user' ROOT_USER_EMAIL='$email' ROOT_USER_PASSWORD='$pass' DOCKER_POOL_FORCE_OVERRIDE=false \
-		 bash -c 'curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash'"; then
+		bash -c 'set -a; . "$1"; set +a; exec curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash' _ "$envf"; then
+		shred -u "$envf" 2>/dev/null || rm -f "$envf"
 		ui_error "Coolify installer failed — see log"
 		return 1
 	fi
+	shred -u "$envf" 2>/dev/null || rm -f "$envf"
 
 	# re-merge our daemon.json hardening (installer rewrites it for address pools)
 	if [ -r /etc/docker/daemon.json ] && command -v jq >/dev/null 2>&1; then
@@ -109,15 +125,21 @@ mod_panel_coolify_run() {
 URL: http://$(hostname -I | awk '{print $1}'):8000  (register FIRST LOGIN immediately if the pre-created account did not apply)"
 
 	ui_box "COOLIFY INSTALLED" \
-		"URL:      http://$(hostname -I | awk '{print $1}'):8000
+		"URL:      http://$(hostname -I | awk '{print $1}'):8000   (plain HTTP — tunnel or TLS-proxy it)
 admin:    $user / $email
 password: $pass   (shown once; also in $VF_CREDS_DIR/coolify-admin.txt)
-firewall: 80,443,8000,6001 open (UFW + DOCKER-USER); all other published ports stay blocked
+firewall: 80,443,8000,6001,6002 open (UFW + DOCKER-USER); all other published ports stay blocked
 data:     /data/coolify   (keep .env — it holds APP_KEY for restores)"
 	return 0
 }
 
 panel_remove_coolify() {
+	# only when THIS vps-forge installed it (or Coolify actually runs here)
+	if ! mod_panel_coolify_check &&
+		[ ! -f "$VF_STATE_DIR/applied/panel_coolify.done" ]; then
+		ui_info "Coolify not installed — nothing to remove"
+		return 0
+	fi
 	ui_header "Removing Coolify"
 	# shellcheck source=/dev/null
 	[ -r "$VF_MODULE_DIR/41-docker-fw.sh" ] && source "$VF_MODULE_DIR/41-docker-fw.sh"
@@ -139,9 +161,22 @@ panel_remove_coolify() {
 panel_remove() { # dispatcher (all three panel modules are sourced together)
 	local which="$1"
 	case "$which" in
+	coolify | cloudpanel | cyberpanel) ;;
+	*) vf_die "unknown panel: $which (coolify|cloudpanel|cyberpanel)" ;;
+	esac
+	# removal deletes containers/data for that panel — require a typed confirm
+	# from a human; scripted runs must pass --yes deliberately
+	if [ "$VF_NONINTERACTIVE" != "1" ] && [ "${VF_CLEAN_YES:-0}" != "1" ]; then
+		local typed
+		typed="$(ui_input "Type '${which}' to confirm removing $which (and its data)" "")" || typed=""
+		[ "$typed" = "$which" ] || {
+			ui_para "confirmation did not match — nothing was removed"
+			return 1
+		}
+	fi
+	case "$which" in
 	coolify) panel_remove_coolify ;;
 	cloudpanel) panel_remove_cloudpanel ;;
 	cyberpanel) panel_remove_cyberpanel ;;
-	*) vf_die "unknown panel: $which (coolify|cloudpanel|cyberpanel)" ;;
 	esac
 }
