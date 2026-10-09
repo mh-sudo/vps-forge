@@ -159,3 +159,43 @@ Root causes fixed:
 - `--config` files are a flat `key: value` subset of YAML (documented as such).
 - TOTP is opt-in with explicit warnings + `totp.confirmed` required in non-interactive
   mode; scratch codes saved once.
+
+## D11. External-audit remediation calls (2026-10-09)
+
+1. **Destruction requires provenance.** self-clean / panel-remove / rollback
+   only remove what vps-forge actually created: packages recorded as
+   *installed-by-us* (missing-only snapshot records), users recorded at
+   creation (`created-users.txt`), Docker data only with `applied/docker.done`,
+   the credentials dir only with its creation marker. Panel removals purge the
+   panel's OWN packages (cloudpanel*, openlitespeed/lsphp) and NEVER shared
+   stacks (nginx*/php*/mysql*), never `/var/www`, never site dirs
+   (`/home/clp`). Cost: self-clean on an old install (no records) leaves more
+   behind, with instructions — that is the safe direction.
+2. **Typed confirms.** `self-clean` requires typing `self-clean`; CLI
+   `panel-remove` requires typing the panel name; `--yes`/`--yes-clean`
+   bypass deliberately for scripted use.
+3. **Module failure semantics.** Modules run inside `( set -Eeuo pipefail )`
+   subshells: an unexpected failing command now FAILS the module (it used to
+   be swallowed by the runner's `if` context). Exit-code contract: 0 = applied,
+   **2 = user declined** (recorded as a skip, never "applied"), other = failure.
+   Legitimately-failing probes are guarded explicitly (`|| true` / `|| warn`).
+4. **fail-open confirmations must prove themselves.** The non-interactive ufw
+   auto-confirm now requires the SSH port to be visible in `ufw status` first;
+   guard-cancel reports an already-fired timer as a failure and sshd/ufw/totp
+   re-validate the live state before recording success.
+5. **TOTP scoping.** TOTP applies ONLY to enrolled users via `Match User` in
+   its own `20-vps-forge-totp.conf` sshd drop-in (global AuthenticationMethods
+   locked key-only accounts like deploy out). Secrets go to the PAM default
+   `~/.google_authenticator` (the old `~/.ssh/` path was never read by PAM).
+6. **DOCKER-USER atomicity.** The chain is rebuilt in one `iptables-restore`
+   transaction (no unfiltered window between flush and rebuild). DROP targets
+   every non-internal interface (docker bridges + tunnel ifaces exempt) —
+   covering multi-NIC boxes while keeping tailnet→container access working.
+7. **Installer pins by ref.** install.sh accepts `--ref=<tag>`/VF_REF and
+   defaults to `main` until the v0.2.0 release, at which point the default
+   flips to the tag (release process, P10).
+8. **Version scheme.** VF_VERSION tracks the next RELEASE tag (0.2.0); the
+   v0.1.0 tag predates the version string and is superseded by v0.2.0.
+9. **Personal test helpers left the public repo** (vnc_*.py, trun/tssh/tscp):
+   they take passwords as argv and auto-accept host keys — maintainer-local
+   only now. `scripts/check.sh` + `make-checksums.sh` stay (CI uses them).

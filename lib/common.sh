@@ -146,25 +146,32 @@ cfg_load_defaults() {
 }
 
 cfg_load_file() { # parse flat "key: value" / "key=value" config file (YAML subset)
-	local f="$1" line k v
+	local f="$1" line k v ek ck
 	[ -r "$f" ] || vf_die "config file not readable: $f"
 	while IFS= read -r line || [ -n "$line" ]; do
 		line="${line#"${line%%[![:space:]]*}"}" # ltrim
 		[ -z "$line" ] && continue
 		case "$line" in \#*) continue ;; esac
 		case "$line" in
-		*:*)
-			k="${line%%:*}"
-			v="${line#*:}"
-			;;
-		*=*)
-			k="${line%%=*}"
-			v="${line#*=}"
-			;;
+		*=* | *:*) ;;
 		*) continue ;;
 		esac
+		# split on whichever delimiter comes FIRST: the old fixed case order let
+		# `*:*` win over `*=*`, so `key=http://x` split at the colon
+		ek="${line%%=*}"
+		ck="${line%%:*}"
+		if [ "${#ek}" -le "${#ck}" ]; then
+			k="$ek"
+			v="${line#*=}"
+		else
+			k="$ck"
+			v="${line#*:}"
+		fi
 		k="$(printf '%s' "$k" | tr -d '[:space:]')"
 		v="${v#"${v%%[![:space:]]*}"}"
+		# strip a trailing inline comment (whitespace + #); a bare # inside a
+		# value (e.g. a token fragment) survives
+		v="${v%%[[:space:]]\#*}"
 		v="${v%"${v##*[![:space:]]}"}"
 		v="${v%\"}"
 		v="${v#\"}"
@@ -173,6 +180,47 @@ cfg_load_file() { # parse flat "key: value" / "key=value" config file (YAML subs
 		[ -n "$k" ] && CFG["$k"]="$v"
 	done <"$f"
 	vf_log_info "loaded config file: $f"
+}
+
+vf_cfg_known_keys() { # every config key vps-forge understands (defaults + module extras)
+	printf '%s\n' \
+		sys.locale sys.timezone sys.hostname \
+		swap.size \
+		perf.zram perf.tmpfs_tmp perf.tmpfs_size \
+		admin.username admin.pubkey admin.disable_root_login admin.key_verified admin.deploy_pubkey \
+		ssh.port ssh.harden ssh.password_auth ssh.allow_tcp_forwarding \
+		fw.open_ports fw.guard \
+		f2b.backend \
+		ua.auto_reboot \
+		docker.bind_ip docker.ipv6 \
+		proxy.engine proxy.domain proxy.acme_email proxy.upstream_port \
+		runtimes.node runtimes.python \
+		node_exporter.listen \
+		health.webhook \
+		backup.target backup.paths backup.schedule backup.repo backup.s3_url backup.s3_key backup.s3_secret \
+		tailscale.auth_key \
+		wg.enabled wg.mode wg.port \
+		cloudflared.token \
+		panel \
+		coolify.admin_user coolify.admin_email \
+		cloudpanel.db_engine cloudpanel.sha256 \
+		panel_cyberpanel.accept_risk \
+		msmtp.host msmtp.port msmtp.user msmtp.pass msmtp.from msmtp.to \
+		totp.enabled totp.users totp.confirmed \
+		services.block_usb \
+		guard.timeout \
+		profile
+}
+
+cfg_warn_unknown_keys() { # typo guard for --config files (runs after all config sources merge)
+	local k x known
+	for k in "${!CFG[@]}"; do
+		known=0
+		for x in $(vf_cfg_known_keys); do
+			[ "$x" = "$k" ] && known=1
+		done
+		[ "$known" = 1 ] || printf 'vps-forge: warning: unknown config key "%s" (typo? see README "Configuration keys")\n' "$k" >&2
+	done
 }
 
 cfg_save() { # persist current answers for next run

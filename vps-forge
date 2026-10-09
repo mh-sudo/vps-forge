@@ -140,6 +140,7 @@ vf_main_run() {
 	cfg_load_defaults
 	cfg_load_state                                                  # remembered answers (weakest)
 	[ -n "${VF_CONFIG_FILE:-}" ] && cfg_load_file "$VF_CONFIG_FILE" # explicit file wins
+	cfg_warn_unknown_keys                                           # typo guard for --config files
 
 	ui_header "Vps Forge $VF_VERSION — Ubuntu VPS provisioning"
 

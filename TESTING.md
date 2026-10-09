@@ -330,3 +330,52 @@ fixed and verified at 80×24 (small terminal).
 34. **two animators fought for one line** — the pkg-install spinner overlapped
     the module animator ("…10s  2ban — downloading packages…"). Fix: removed
     the pkg spinner; the per-module animator already covers it.
+
+## L. External audit remediation (2026-10-09) — all Critical/High claims verified, then fixed
+
+An external audit (commit 1286736) reported 1 Critical + 7 High + 9 Medium items
+plus a long tail. Every claim was re-verified against the source before fixing
+(two reviewers + direct reads). Verdicts: **all C/H confirmed**; corrections
+noted below. Fixes in f1a15e7 (+ b8f9e49 ci-format). CI now also enforces
+`scripts/check.sh` (checksum freshness) and lints `scripts/`.
+
+| # | Audit id | Fix (verified against source, not just trusted) |
+|---|----------|--------------------------------------------------|
+| 35 | C1 | `panel_remove_*` gate on real presence + provenance; CloudPanel removal purges ONLY cloudpanel* — never nginx/php/mysql globs, never `/var/www`, never `/home/clp`; typed confirms for `self-clean` and `panel-remove` |
+| 36 | C1 | users deleted by self-clean come from `created-users.txt` (written by modules 20/52/53 at creation time) — no more blind `userdel -r` of same-named users |
+| 37 | C1 | `/var/lib/docker` wiped only with `applied/docker.done`; credentials dir only with its creation marker (restic.pw survives); `ufw reset`/su-statoverride only with `applied/ufw.done`/`pam.done` |
+| 38 | H2 | snapshot records only the `missing[]` packages; autoremove dropped from rollback purges |
+| 39 | H3 | modules run in `( set -Eeuo pipefail; … )` — unexpected command failures fail the module; rc=2 = user-declined (recorded as skip, never "applied"); per-module guard sweep for legitimate failures (aa-status, gpg fingerprints, NodeSource, rkhunter propupd now warns) |
+| 40 | H3 | `vf_ufw_allow_port` verifies the rule in `ufw status`; non-interactive failopen REQUIRES the ssh port allowed before auto-confirming |
+| 41 | M1 | `vf_guard_cancel` returns 1 when the timer already fired; sshd/ufw/totp re-validate the live state (port listening / ufw active) before claiming success |
+| 42 | H4 | `vf_ask_bool` normalizes true/false/1/0 spellings — "default: no" + ENTER=yes bug gone |
+| 43 | H5 | profile spelling normalized (`docker-host` → `dockerhost`) in flag and TUI paths |
+| 44 | M6 | scratch dir created lazily after root check + EXIT-trap cleanup (`--version` works as non-root, no /run leak); `vf_need_root` re-execs with the original argv; `--yes` aborts on failed preflight; `self-clean --yes` honored; `--module=` deduped + manifest-ordered + unknown ids rejected |
+| 45 | H6 | installer opens `/dev/tty` as the probe (root-without-tty passed `-r/-w` and died), strips `--base-url/--dest/--ref` from forwarded args, downloads into `DEST.new` + atomic swap (no stale files), and requires a checksums.txt entry for EVERY file (no `--ignore-missing`) |
+| 46 | H7 | examples/test-config.yaml now `<YOUR_PUBKEY>`; `vf_validate_pubkey` refuses placeholders + non-key strings in ask AND run paths |
+| 47 | M4 | secrets registered via `vf_secret_register` and redacted from every log line; `ui_spin` shell-quotes args (`printf %q`); coolify/tailscale/cloudflared pass secrets via 600-mode env files (nothing on argv) |
+| 48 | M5 | restic password shown ONCE with a copy-it-elsewhere pause; backup exec moved to a generated helper script (%q-quoted paths — no more `bash -c` splice); `s3:` prefix tolerated/stripped; prompt no longer invites the prefix |
+| 49 | M2 | Caddy key downloaded once + `gpg --dearmor` (armored-content-in-.gpg used to break apt); every install step checked; `is-active` gate; upstream port asked (proxy.upstream_port); domain validated |
+| 50 | M3 | TOTP rewritten: secret at `~/.google_authenticator` (PAM's real default), re-runs never overwrite, secret regex parses the labeled line, AuthenticationMethods scoped via `Match User` in its own `20-vps-forge-totp.conf` drop-in (deploy stays key-only), failed-config revert also removes the PAM line |
+| 51 | M7 | DOCKER-USER rebuilt as ONE `iptables-restore` transaction (no unfiltered window on reload); DROP now on every non-internal interface (not just default-route); `docker_fw_allow` greps `--ctorigdstport`; `docker_fw_deny` validates ports; verify-firewall patterns updated |
+| 52 | M9 | node_exporter `_check` compares the installed version (binary sha ≠ tarball sha could never be true); wireguard umask scoped to keygen only + `wg.mode` access|full (full = ip_forward + MASQUERADE; access = `AllowedIPs 10.99.0.0/24` — the old template promised full tunnel with no forwarding/NAT); cyberpanel decline = rc2 skip (was recorded APPLIED), password saved only after CLI reset attempt with explicit warning when it failed, 8090 text matches the rule it adds; coolify text matches 6001+6002 |
+| 53 | M8 | config parsing splits on whichever delimiter comes FIRST (`key=http://x:8080` no longer breaks at the colon — verified with a table test), inline ` # comment` stripped, unknown `--config` keys now warn via `cfg_warn_unknown_keys` (typo guard; known-keys list in `vf_cfg_known_keys`) |
+| 54 | lows | plain chooser: empty/invalid → FIRST option (was: last); spinner frame printed `\\` for `\` + 1h cap; `${has_panel#panel-}`→`#panel_`; stray `}` in self-clean banner; NO_COLOR + non-UTF-8 → plain text/ASCII glyphs; snapshot dirs 700; provider hints exact-match (Hyper-V ≠ Azure); preflight refuses containers + non-systemd PID 1 |
+| 55 | docs | README: all subcommands documented, `docker-allow` arg2 = comment (was "container"), snapshot naming `<ts>.<tag>`, RAM floor text = 900 MB, Configuration-keys appendix added; SECURITY.md = 72h ack; personal test helpers (vnc_*.py, trun/tssh/tscp) removed from the public repo |
+| 56 | CI | `permissions: contents: read`; checkout pinned to v4.2.2 SHA; shfmt download checksum-verified (1904ec6b…); `scripts/` linted; `scripts/check.sh` (incl. checksums.txt freshness) enforced in CI; scripts formatted with the PINNED 3.11.0 (local 3.14 disagrees — kept a copy at /tmp/shfmt-3.11.0) |
+
+Audit corrections (claims we did NOT fix as stated): 40-docker was already
+checked end-to-end (audit never listed it); 51-runtimes DID warn (but then
+installed distro nodejs anyway — behavior aligned with the message now);
+SECURITY.md had a vague response window (now a 72h ack); self-clean's
+"restore from first snapshot" is the documented design — the real fix is the
+warning that post-run manual edits are discarded (added).
+
+### Pending (live) — blocked on the test server
+
+The owner reinstalled the test server's OS again AFTER the last round; both
+saved credentials are rejected, so the live battery awaits new credentials:
+H8 `ssh.socket` port-change on 24.04, Caddy apt keyring proof, TOTP enrolment
+output/paths, non-root `--version`, C1/H2 acceptance test (pre-existing
+nginx + /var/www + decoy user must survive dockerhost run + self-clean),
+full fresh `--yes --profile=recommended` run. Static gates are all green.
